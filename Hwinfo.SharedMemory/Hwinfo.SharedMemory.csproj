@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <Title>Hwinfo Shared Memory Reader</Title>
+        <Description>Reads sensor values shared by Hwinfo via shared memory</Description>
+        <Authors>Manfred Graf</Authors>
+        <Copyright>© 2023 Manfred Graf</Copyright>
+        <IsPackable>true</IsPackable>
+        <TargetFramework>net6.0-windows</TargetFramework>
+        <LangVersion>11</LangVersion>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+        <RootNamespace>Hwinfo.SharedMemory</RootNamespace>
+        <VersionPrefix>1.0.0</VersionPrefix>
+        <Nullable>enable</Nullable>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <PackageId>Hwinfo.SharedMemory.Net</PackageId>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <RepositoryUrl>https://github.com/Seraksab/Hwinfo.SharedMemory.Net</RepositoryUrl>
+        <PackageTags>Hwinfo,HWiNFO64</PackageTags>
+    </PropertyGroup>
+
+</Project>

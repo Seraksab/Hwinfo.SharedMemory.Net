@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hwinfo.SharedMemory", "Hwinfo.SharedMemory\Hwinfo.SharedMemory.csproj", "{073F1A50-41C3-48CD-9DD9-80D11728C76D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3AD0A99D-C0C8-409E-A07B-57564214B785}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{7DC55568-E2E1-412E-A40B-97FC4C8E427A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{AA697E8A-528E-43F4-9AEA-228C00F3810D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{073F1A50-41C3-48CD-9DD9-80D11728C76D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{073F1A50-41C3-48CD-9DD9-80D11728C76D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{073F1A50-41C3-48CD-9DD9-80D11728C76D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{073F1A50-41C3-48CD-9DD9-80D11728C76D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA697E8A-528E-43F4-9AEA-228C00F3810D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA697E8A-528E-43F4-9AEA-228C00F3810D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA697E8A-528E-43F4-9AEA-228C00F3810D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA697E8A-528E-43F4-9AEA-228C00F3810D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{073F1A50-41C3-48CD-9DD9-80D11728C76D} = {3AD0A99D-C0C8-409E-A07B-57564214B785}
+		{AA697E8A-528E-43F4-9AEA-228C00F3810D} = {7DC55568-E2E1-412E-A40B-97FC4C8E427A}
+	EndGlobalSection
+EndGlobal
