@@ -18,6 +18,7 @@
         <InvariantGlobalization>true</InvariantGlobalization>
         <RepositoryUrl>https://github.com/Seraksab/Hwinfo.SharedMemory.Net</RepositoryUrl>
         <PackageTags>Hwinfo,HWiNFO64</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
 </Project>
