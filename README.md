@@ -1,6 +1,6 @@
 # Hwinfo.SharedMemory.Net
 
-[![Nuget](https://img.shields.io/nuget/v/Hwinfo.SharedMemory.Net?style=flat-square)](https://www.nuget.org/packages/AIDA64.SensorValues.Net)
+[![Nuget](https://img.shields.io/nuget/v/Hwinfo.SharedMemory.Net?style=flat-square)](https://www.nuget.org/packages/Hwinfo.SharedMemory.Net)
 ![GitHub](https://img.shields.io/github/license/Seraksab/Hwinfo.SharedMemory.Net)
 
 A small and simple library to read sensor values shared by [HWiNFO](https://www.hwinfo.com/) via shared memory.
