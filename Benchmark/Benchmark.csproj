@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net6.0-windows</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Hwinfo.SharedMemory.Benchmark</RootNamespace>
+    </PropertyGroup>
+
+
+    <ItemGroup>
+        <PackageReference Include="BenchmarkDotNet" Version="0.13.8"/>
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <ProjectReference Include="..\Hwinfo.SharedMemory\Hwinfo.SharedMemory.csproj" />
+    </ItemGroup>
+
+</Project>
