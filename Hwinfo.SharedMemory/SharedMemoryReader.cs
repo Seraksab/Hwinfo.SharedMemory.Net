@@ -13,11 +13,11 @@ namespace Hwinfo.SharedMemory;
 public class SharedMemoryReader : IDisposable
 {
   private const string HWiNfoSensorsSm2Mutex = "Global\\HWiNFO_SM2_MUTEX";
-  private const string HWiNfoSensorsMapFileName = "Global\\HWiNFO_SENS_SM2";
+  private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
+  private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
   private const int HWiNfoSensorsSm2MutexTimeout = 2000;
 
   private readonly Mutex _mutex;
-  private SmSensorsSensorElement[] _sensors;
 
   /// <summary>
   /// Creates a new SharedMemoryReader 
@@ -25,23 +25,37 @@ public class SharedMemoryReader : IDisposable
   public SharedMemoryReader()
   {
     _mutex = new Mutex(false, HWiNfoSensorsSm2Mutex);
-    _sensors = Array.Empty<SmSensorsSensorElement>();
   }
 
   /// <summary>
-  /// Reads the sensor values
+  /// Reads the sensor values of the local HWiNFO instance
   /// </summary>
   /// <returns>The sensor values</returns>
-  public IEnumerable<SensorReading> Read()
+  public IEnumerable<SensorReading> ReadLocal() => ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
+
+
+  /// <summary>
+  /// Reads the sensor values of the remote HWiNFO instance with the given connection index
+  /// </summary>
+  /// <param name="index">The connection index starting with 0></param>
+  /// <returns>The sensor values</returns>
+  public IEnumerable<SensorReading> ReadRemote(int index = 0) => ReadMemoryMappedFile(
+    $"{HWiNfoSensorsMapFileNameRemote}{index}"
+  );
+
+  public void Dispose() => _mutex.Dispose();
+
+  private SensorReading[] ReadMemoryMappedFile(string fileName)
   {
     try
     {
       _mutex.WaitOne(HWiNfoSensorsSm2MutexTimeout);
-      return ReadSm();
+
+      using var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
+      return ReadSensorReadings(mmf);
     }
     catch (FileNotFoundException)
     {
-      _sensors = Array.Empty<SmSensorsSensorElement>();
       return Array.Empty<SensorReading>();
     }
     finally
@@ -57,47 +71,32 @@ public class SharedMemoryReader : IDisposable
     }
   }
 
-  public void Dispose() => _mutex.Dispose();
-
-  private IEnumerable<SensorReading> ReadSm()
+  private static SensorReading[] ReadSensorReadings(MemoryMappedFile mmf)
   {
-    using var mmf = MemoryMappedFile.OpenExisting(HWiNfoSensorsMapFileName, MemoryMappedFileRights.Read);
-    using var accessor = mmf.CreateViewAccessor(
-      offset: 0,
-      size: Marshal.SizeOf(typeof(SmSensorsSharedMem2)),
-      access: MemoryMappedFileAccess.Read
+    var sharedMem = ReadStruct<SmSensorsSharedMem2>(mmf, 0, Marshal.SizeOf(typeof(SmSensorsSharedMem2)));
+
+    // read sensors (= group)
+    var sensors = ReadStructs<SmSensorsSensorElement>(
+      mmf,
+      sharedMem.SensorSection_Offset,
+      sharedMem.SensorSection_NumElements,
+      (int)sharedMem.SensorSection_SizeOfElement
     );
 
-    accessor.Read(0, out SmSensorsSharedMem2 sharedMem);
+    // read sensor readings 
+    var readings = ReadStructs<SmSensorsReadingElement>(
+      mmf,
+      sharedMem.ReadingSection_Offset,
+      sharedMem.ReadingElements_NumElements,
+      (int)sharedMem.ReadingSection_SizeOfElement
+    );
 
-    if (_sensors.Length != sharedMem.SensorSection_NumElements)
+    var sensorReadings = new SensorReading[readings.Length];
+    for (var idx = 0; idx < readings.Length; idx++)
     {
-      _sensors = ReadSensorsGroups(mmf, sharedMem);
-    }
-
-    return ReadSensors(mmf, sharedMem);
-  }
-
-  private IEnumerable<SensorReading> ReadSensors(MemoryMappedFile mmf, in SmSensorsSharedMem2 sharedMem)
-  {
-    var sizeReadingSection = sharedMem.ReadingSection_SizeOfElement;
-    var byteBuffer = new byte[sizeReadingSection];
-    var readings = new SensorReading[sharedMem.ReadingElements_NumElements];
-
-    for (uint idx = 0; idx < sharedMem.ReadingElements_NumElements; idx++)
-    {
-      using var sensorElementAccessor = mmf.CreateViewStream(
-        offset: sharedMem.ReadingSection_Offset + (idx * sizeReadingSection),
-        size: sizeReadingSection,
-        access: MemoryMappedFileAccess.Read
-      );
-
-      sensorElementAccessor.Read(byteBuffer, 0, (int)sizeReadingSection);
-
-      var reading = BufferToStruct<SmSensorsReadingElement>(byteBuffer);
-      var sensor = _sensors[(int)reading.Idx];
-
-      readings[idx] = new SensorReading(
+      var reading = readings[idx];
+      var sensor = sensors[(int)reading.Idx];
+      sensorReadings[idx] = new SensorReading(
         Id: reading.Id,
         Index: reading.Idx,
         Type: reading.Type,
@@ -115,46 +114,57 @@ public class SharedMemoryReader : IDisposable
       );
     }
 
-    return readings;
+    return sensorReadings;
   }
 
-  private SmSensorsSensorElement[] ReadSensorsGroups(MemoryMappedFile mmf, in SmSensorsSharedMem2 sharedMem)
+
+  private static T ReadStruct<T>(MemoryMappedFile mmf, long offset, long elementSize) where T : struct
   {
-    var sizeSensorElement = sharedMem.SensorSection_SizeOfElement;
-    var byteBuffer = new byte[sizeSensorElement];
-    var sensors = new SmSensorsSensorElement[sharedMem.SensorSection_NumElements];
+    using var viewAccessor = mmf.CreateViewAccessor(
+      offset: offset,
+      size: elementSize,
+      access: MemoryMappedFileAccess.Read
+    );
 
-    for (uint idx = 0; idx < sharedMem.SensorSection_NumElements; idx++)
+    viewAccessor.Read(0, out T reading);
+    return reading;
+  }
+
+  private static T[] ReadStructs<T>(MemoryMappedFile mmf, long offset, long numElements, int elementSize)
+    where T : struct
+  {
+    using var viewStream = mmf.CreateViewStream(
+      offset: offset,
+      size: elementSize * numElements,
+      access: MemoryMappedFileAccess.Read
+    );
+
+    var results = new T[numElements];
+    var byteBuffer = new byte[elementSize];
+    for (var idx = 0; idx < numElements; idx++)
     {
-      using var sensorElementAccessor = mmf.CreateViewStream(
-        sharedMem.SensorSection_Offset + (idx * sizeSensorElement),
-        sizeSensorElement,
-        MemoryMappedFileAccess.Read
-      );
-
-      sensorElementAccessor.Read(byteBuffer, 0, (int)sizeSensorElement);
-      sensors[idx] = BufferToStruct<SmSensorsSensorElement>(byteBuffer);
+      if (viewStream.Read(byteBuffer) < elementSize) return results;
+      results[idx] = BufferToStruct<T>(byteBuffer);
     }
 
-    return sensors;
+    return results;
   }
 
   private static T BufferToStruct<T>(byte[] byteBuffer) where T : struct
   {
-    if (byteBuffer.Length <= 0)
-    {
-      throw new Exception("No bytes read");
-    }
+    if (byteBuffer.Length <= 0) return default;
 
     var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
-    var element = (T)
-    (
-      Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T))
-      ?? throw new Exception("Failed to parse byte buffer to struct")
-    );
-
-    handle.Free();
-
-    return element;
+    try
+    {
+      return (T)(
+        Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T))
+        ?? throw new Exception("Failed to parse byte buffer to struct")
+      );
+    }
+    finally
+    {
+      handle.Free();
+    }
   }
 }

@@ -11,7 +11,7 @@ A small and simple library to read sensor values shared by [HWiNFO](https://www.
 
 ```csharp
 var reader = new SharedMemoryReader();
-foreach (var sensorReading in reader.Read())
+foreach (var sensorReading in reader.ReadLocal())
 {
   Console.Out.WriteLine(sensorReading);
 }

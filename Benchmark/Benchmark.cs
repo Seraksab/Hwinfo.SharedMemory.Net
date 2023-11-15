@@ -10,5 +10,5 @@ public class Benchmark
   private readonly SharedMemoryReader _sharedMemoryReader = new();
 
   [Benchmark]
-  public IList<SensorReading> ReadSharedMemory() => _sharedMemoryReader.Read().ToList();
+  public IList<SensorReading> ReadSharedMemory() => _sharedMemoryReader.ReadLocal().ToList();
 }
