@@ -15,15 +15,17 @@ public class SharedMemoryReader : IDisposable
   private const string HWiNfoSensorsSm2Mutex = "Global\\HWiNFO_SM2_MUTEX";
   private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
   private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
-  private const int HWiNfoSensorsSm2MutexTimeout = 2000;
 
+  private readonly int _mutexTimeout;
   private readonly Mutex _mutex;
 
   /// <summary>
   /// Creates a new SharedMemoryReader 
   /// </summary>
-  public SharedMemoryReader()
+  /// <param name="mutexTimeout">The number of milliseconds to wait for the mutex, or Infinite (-1) to wait indefinitely</param>
+  public SharedMemoryReader(int mutexTimeout = 1000)
   {
+    _mutexTimeout = mutexTimeout;
     _mutex = new Mutex(false, HWiNfoSensorsSm2Mutex);
   }
 
@@ -31,7 +33,13 @@ public class SharedMemoryReader : IDisposable
   /// Reads the sensor values of the local HWiNFO instance
   /// </summary>
   /// <returns>The sensor values</returns>
-  public IEnumerable<SensorReading> ReadLocal() => ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
+  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception> 
+  public IEnumerable<SensorReading> ReadLocal()
+  {
+    return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
+  }
 
 
   /// <summary>
@@ -39,24 +47,26 @@ public class SharedMemoryReader : IDisposable
   /// </summary>
   /// <param name="index">The connection index starting with 0></param>
   /// <returns>The sensor values</returns>
-  public IEnumerable<SensorReading> ReadRemote(int index = 0) => ReadMemoryMappedFile(
-    $"{HWiNfoSensorsMapFileNameRemote}{index}"
-  );
+  /// <exception cref="ArgumentOutOfRangeException">The index is negative.</exception>
+  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception> 
+  public IEnumerable<SensorReading> ReadRemote(int index = 0)
+  {
+    if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
+    return ReadMemoryMappedFile($"{HWiNfoSensorsMapFileNameRemote}{index}");
+  }
 
+  /// <inheritdoc />
   public void Dispose() => _mutex.Dispose();
 
-  private SensorReading[] ReadMemoryMappedFile(string fileName)
+  private IEnumerable<SensorReading> ReadMemoryMappedFile(string fileName)
   {
     try
     {
-      _mutex.WaitOne(HWiNfoSensorsSm2MutexTimeout);
-
+      _mutex.WaitOne(_mutexTimeout);
       using var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
       return ReadSensorReadings(mmf);
-    }
-    catch (FileNotFoundException)
-    {
-      return Array.Empty<SensorReading>();
     }
     finally
     {
@@ -71,7 +81,7 @@ public class SharedMemoryReader : IDisposable
     }
   }
 
-  private static SensorReading[] ReadSensorReadings(MemoryMappedFile mmf)
+  private static IEnumerable<SensorReading> ReadSensorReadings(MemoryMappedFile mmf)
   {
     var sharedMem = ReadStruct<SmSensorsSharedMem2>(mmf, 0, Marshal.SizeOf(typeof(SmSensorsSharedMem2)));
 
@@ -143,28 +153,25 @@ public class SharedMemoryReader : IDisposable
     var byteBuffer = new byte[elementSize];
     for (var idx = 0; idx < numElements; idx++)
     {
-      if (viewStream.Read(byteBuffer) < elementSize) return results;
-      results[idx] = BufferToStruct<T>(byteBuffer);
+      if (viewStream.Read(byteBuffer) < elementSize)
+      {
+        throw new InvalidDataException("Failed to read bytes from memory mapped file.");
+      }
+
+      var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
+      try
+      {
+        results[idx] = (T)(
+          Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T))
+          ?? throw new InvalidDataException("Failed to convert bytes to struct.")
+        );
+      }
+      finally
+      {
+        handle.Free();
+      }
     }
 
     return results;
-  }
-
-  private static T BufferToStruct<T>(byte[] byteBuffer) where T : struct
-  {
-    if (byteBuffer.Length <= 0) return default;
-
-    var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
-    try
-    {
-      return (T)(
-        Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T))
-        ?? throw new Exception("Failed to parse byte buffer to struct")
-      );
-    }
-    finally
-    {
-      handle.Free();
-    }
   }
 }

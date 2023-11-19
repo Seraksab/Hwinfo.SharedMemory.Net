@@ -2,6 +2,12 @@
 
 namespace Hwinfo.SharedMemory;
 
+internal readonly struct SmConstants
+{
+  internal const int HWiNFO_SENSORS_STRING_LEN2 = 128;
+  internal const int HWiNFO_UNIT_STRING_LEN = 16;
+}
+
 [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Ansi)]
 internal readonly struct SmSensorsReadingElement
 {
@@ -9,13 +15,13 @@ internal readonly struct SmSensorsReadingElement
   public readonly uint Idx;
   public readonly uint Id;
 
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
   public readonly string LabelOrig;
 
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
   public readonly string LabelUser;
 
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 16)]
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_UNIT_STRING_LEN)]
   public readonly string Unit;
 
   public readonly double Value;
@@ -30,10 +36,10 @@ internal readonly struct SmSensorsSensorElement
   public readonly uint Id;
   public readonly uint Instance;
 
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
   public readonly string LabelOrig;
 
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
   public readonly string LabelUser;
 }
 

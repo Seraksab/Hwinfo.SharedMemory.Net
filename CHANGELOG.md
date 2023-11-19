@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Support for remote HWiNFO instances
 - Performance improvements
+- Configurable mutex timeout
+
+### Changed
+
+- FileNotFoundException is no longer caught
 
 ## 1.0.0 - 2023-09-22
 
