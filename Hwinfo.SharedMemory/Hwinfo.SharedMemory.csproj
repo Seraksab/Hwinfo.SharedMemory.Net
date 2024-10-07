@@ -10,7 +10,7 @@
         <LangVersion>12</LangVersion>
         <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <RootNamespace>Hwinfo.SharedMemory</RootNamespace>
-        <VersionPrefix>2.0.0</VersionPrefix>
+        <VersionPrefix>2.1.0</VersionPrefix>
         <Nullable>enable</Nullable>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
