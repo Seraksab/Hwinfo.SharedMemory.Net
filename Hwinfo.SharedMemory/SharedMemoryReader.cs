@@ -60,7 +60,7 @@ public class SharedMemoryReader : IDisposable
   /// <inheritdoc />
   public void Dispose() => _mutex.Dispose();
 
-  private IEnumerable<SensorReading> ReadMemoryMappedFile(string fileName)
+  private SensorReading[] ReadMemoryMappedFile(string fileName)
   {
     try
     {
@@ -81,26 +81,44 @@ public class SharedMemoryReader : IDisposable
     }
   }
 
-  private static IEnumerable<SensorReading> ReadSensorReadings(MemoryMappedFile mmf)
+  private static SensorReading[] ReadSensorReadings(MemoryMappedFile mmf)
   {
+    // Read sharedMem
     var sharedMem = ReadStruct<SmSensorsSharedMem2>(mmf, 0, Marshal.SizeOf(typeof(SmSensorsSharedMem2)));
 
-    // read sensors (= group)
-    var sensors = ReadStructs<SmSensorsSensorElement>(
+    // Read sensor data and reading data
+    var sensors = ReadSensorData(mmf, sharedMem);
+    var readings = ReadReadingData(mmf, sharedMem);
+
+    // Convert to SensorReading 
+    return ConvertToSensorReading(readings, sensors);
+  }
+
+  private static SmSensorsSensorElement[] ReadSensorData(MemoryMappedFile mmf, SmSensorsSharedMem2 sharedMem)
+  {
+    return ReadStructs<SmSensorsSensorElement>(
       mmf,
       sharedMem.SensorSection_Offset,
       sharedMem.SensorSection_NumElements,
       (int)sharedMem.SensorSection_SizeOfElement
     );
+  }
 
-    // read sensor readings 
-    var readings = ReadStructs<SmSensorsReadingElement>(
+  private static SmSensorsReadingElement[] ReadReadingData(MemoryMappedFile mmf, SmSensorsSharedMem2 sharedMem)
+  {
+    return ReadStructs<SmSensorsReadingElement>(
       mmf,
       sharedMem.ReadingSection_Offset,
       sharedMem.ReadingElements_NumElements,
       (int)sharedMem.ReadingSection_SizeOfElement
     );
+  }
 
+  private static SensorReading[] ConvertToSensorReading(
+    SmSensorsReadingElement[] readings,
+    SmSensorsSensorElement[] sensors
+  )
+  {
     var sensorReadings = new SensorReading[readings.Length];
     for (var idx = 0; idx < readings.Length; idx++)
     {
@@ -126,7 +144,6 @@ public class SharedMemoryReader : IDisposable
 
     return sensorReadings;
   }
-
 
   private static T ReadStruct<T>(MemoryMappedFile mmf, long offset, long elementSize) where T : struct
   {
