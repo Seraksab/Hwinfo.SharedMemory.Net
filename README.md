@@ -19,8 +19,13 @@ foreach (var sensorReading in reader.ReadLocal())
 
 ## Benchmark
 
-| Method           | Mean     | Error     | StdDev    | Allocated |
-|----------------- |---------:|----------:|----------:|----------:|
-| ReadSharedMemory | 1.546 ms | 0.2834 ms | 0.8356 ms | 156.91 KB |
+| Method           |     Mean |    Error |   StdDev | Allocated |
+|------------------|---------:|---------:|---------:|----------:|
+| ReadSharedMemory | 214.3 us | 101.0 us | 297.8 us | 202.44 KB |
 
-Run on: AMD Ryzen 7 1800X, DDR4-3000 CL14
+Run on:
+
+- Windows 11
+- .NET 8.0.7
+- AMD Ryzen 9 7900X
+- DDR5-6200 CL30
