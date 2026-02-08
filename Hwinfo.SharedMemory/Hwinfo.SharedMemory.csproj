@@ -6,8 +6,8 @@
         <Authors>Manfred Graf</Authors>
         <Copyright>© 2024 Manfred Graf</Copyright>
         <IsPackable>true</IsPackable>
-        <TargetFrameworks>net6.0-windows;net8.0-windows</TargetFrameworks>
-        <LangVersion>12</LangVersion>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <LangVersion>14</LangVersion>
         <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <RootNamespace>Hwinfo.SharedMemory</RootNamespace>
         <VersionPrefix>2.1.0</VersionPrefix>
