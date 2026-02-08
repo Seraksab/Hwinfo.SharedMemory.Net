@@ -11,15 +11,15 @@ internal readonly struct SmConstants
 [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Ansi)]
 internal readonly struct SmSensorsReadingElement
 {
-  public readonly SensorType Type;
-  public readonly uint Idx;
-  public readonly uint Id;
+  public readonly SensorType Type;  // Type of sensor reading
+  public readonly uint SensorIndex; // This is the index of sensor in the Sensors[] array to which this reading belongs to
+  public readonly uint ReadingId;   // A unique ID of the reading within a particular sensor
 
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
-  public readonly string LabelOrig;
+  public readonly string LabelOrig; // Original label (e.g. "Chassis2 Fan")
 
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
-  public readonly string LabelUser;
+  public readonly string LabelUser; // Label displayed, which might have been renamed by user
 
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_UNIT_STRING_LEN)]
   public readonly string Unit;
@@ -33,14 +33,14 @@ internal readonly struct SmSensorsReadingElement
 [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Ansi)]
 internal readonly struct SmSensorsSensorElement
 {
-  public readonly uint Id;
-  public readonly uint Instance;
+  public readonly uint SensorId;   // A unique Sensor ID
+  public readonly uint SensorInst; // The instance of the sensor (together with dwSensorID forms a unique ID)
 
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
-  public readonly string LabelOrig;
+  public readonly string NameOrig; // Original sensor name
 
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = SmConstants.HWiNFO_SENSORS_STRING_LEN2)]
-  public readonly string LabelUser;
+  public readonly string NameUser; // Sensor name displayed, which might have been renamed by user
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Ansi)]

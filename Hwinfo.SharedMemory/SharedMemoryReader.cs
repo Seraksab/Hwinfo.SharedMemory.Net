@@ -41,7 +41,6 @@ public class SharedMemoryReader : IDisposable
     return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
   }
 
-
   /// <summary>
   /// Reads the sensor values of the remote HWiNFO instance with the given connection index
   /// </summary>
@@ -123,11 +122,11 @@ public class SharedMemoryReader : IDisposable
     for (var idx = 0; idx < readings.Length; idx++)
     {
       var reading = readings[idx];
-      var sensor = sensors[(int)reading.Idx];
+      var sensor = sensors[(int)reading.SensorIndex];
       sensorReadings[idx] = new SensorReading(
-        Id: reading.Id,
-        Index: reading.Idx,
-        Type: reading.Type,
+        ReadingId: reading.ReadingId,
+        SensorIndex: reading.SensorIndex,
+        ReadingType: reading.Type,
         LabelOrig: reading.LabelOrig,
         LabelUser: reading.LabelUser,
         Unit: reading.Unit,
@@ -135,10 +134,10 @@ public class SharedMemoryReader : IDisposable
         ValueMin: reading.ValueMin,
         ValueMax: reading.ValueMax,
         ValueAvg: reading.ValueAvg,
-        GroupId: sensor.Id,
-        GroupInstanceId: sensor.Instance,
-        GroupLabelUser: sensor.LabelUser,
-        GroupLabelOrig: sensor.LabelOrig
+        SensorId: sensor.SensorId,
+        SensorInstance: sensor.SensorInst,
+        SensorNameOrig: sensor.NameOrig,
+        SensorNameUser: sensor.NameUser
       );
     }
 
