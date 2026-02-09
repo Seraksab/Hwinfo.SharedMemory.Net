@@ -4,13 +4,13 @@
         <Title>Hwinfo Shared Memory Reader</Title>
         <Description>Reads sensor values shared by Hwinfo via shared memory</Description>
         <Authors>Manfred Graf</Authors>
-        <Copyright>© 2024 Manfred Graf</Copyright>
+        <Copyright>© 2026 Manfred Graf</Copyright>
         <IsPackable>true</IsPackable>
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>14</LangVersion>
         <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <RootNamespace>Hwinfo.SharedMemory</RootNamespace>
-        <VersionPrefix>2.1.0</VersionPrefix>
+        <VersionPrefix>3.0.0</VersionPrefix>
         <Nullable>enable</Nullable>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
