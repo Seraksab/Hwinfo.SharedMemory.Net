@@ -18,6 +18,7 @@ public class SharedMemoryReader : IDisposable
 
   private readonly int _mutexTimeout;
   private readonly Mutex _mutex;
+  private readonly Dictionary<string, (MemoryMappedFile Mmf, MemoryMappedViewAccessor Accessor)> _cache = new();
 
   /// <summary>
   /// Creates a new SharedMemoryReader 
@@ -57,15 +58,33 @@ public class SharedMemoryReader : IDisposable
   }
 
   /// <inheritdoc />
-  public void Dispose() => _mutex.Dispose();
+  public void Dispose()
+  {
+    _mutex.Dispose();
+    foreach (var value in _cache.Values)
+    {
+      value.Accessor.Dispose();
+      value.Mmf.Dispose();
+    }
+
+    _cache.Clear();
+  }
 
   private SensorReading[] ReadMemoryMappedFile(string fileName)
   {
     try
     {
       _mutex.WaitOne(_mutexTimeout);
-      using var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
-      return ReadSensorReadings(mmf);
+
+      if (!_cache.TryGetValue(fileName, out var cached))
+      {
+        var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
+        var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+        cached = (mmf, accessor);
+        _cache[fileName] = cached;
+      }
+
+      return ReadSensorReadings(cached.Accessor);
     }
     finally
     {
@@ -80,33 +99,39 @@ public class SharedMemoryReader : IDisposable
     }
   }
 
-  private static SensorReading[] ReadSensorReadings(MemoryMappedFile mmf)
+  private static SensorReading[] ReadSensorReadings(MemoryMappedViewAccessor accessor)
   {
     // Read sharedMem
-    var sharedMem = ReadStruct<SmSensorsSharedMem2>(mmf, 0, Marshal.SizeOf(typeof(SmSensorsSharedMem2)));
+    accessor.Read(0, out SmSensorsSharedMem2 sharedMem);
 
     // Read sensor data and reading data
-    var sensors = ReadSensorData(mmf, sharedMem);
-    var readings = ReadReadingData(mmf, sharedMem);
+    var sensors = ReadSensorData(accessor, sharedMem);
+    var readings = ReadReadingData(accessor, sharedMem);
 
     // Convert to SensorReading 
     return ConvertToSensorReading(readings, sensors);
   }
 
-  private static SmSensorsSensorElement[] ReadSensorData(MemoryMappedFile mmf, SmSensorsSharedMem2 sharedMem)
+  private static SmSensorsSensorElement[] ReadSensorData(
+    MemoryMappedViewAccessor accessor,
+    SmSensorsSharedMem2 sharedMem
+  )
   {
     return ReadStructs<SmSensorsSensorElement>(
-      mmf,
+      accessor,
       sharedMem.SensorSection_Offset,
       sharedMem.SensorSection_NumElements,
       (int)sharedMem.SensorSection_SizeOfElement
     );
   }
 
-  private static SmSensorsReadingElement[] ReadReadingData(MemoryMappedFile mmf, SmSensorsSharedMem2 sharedMem)
+  private static SmSensorsReadingElement[] ReadReadingData(
+    MemoryMappedViewAccessor accessor,
+    SmSensorsSharedMem2 sharedMem
+  )
   {
     return ReadStructs<SmSensorsReadingElement>(
-      mmf,
+      accessor,
       sharedMem.ReadingSection_Offset,
       sharedMem.ReadingElements_NumElements,
       (int)sharedMem.ReadingSection_SizeOfElement
@@ -121,8 +146,8 @@ public class SharedMemoryReader : IDisposable
     var sensorReadings = new SensorReading[readings.Length];
     for (var idx = 0; idx < readings.Length; idx++)
     {
-      var reading = readings[idx];
-      var sensor = sensors[(int)reading.SensorIndex];
+      ref readonly var reading = ref readings[idx];
+      ref readonly var sensor = ref sensors[(int)reading.SensorIndex];
       sensorReadings[idx] = new SensorReading(
         ReadingId: reading.ReadingId,
         SensorIndex: reading.SensorIndex,
@@ -144,48 +169,27 @@ public class SharedMemoryReader : IDisposable
     return sensorReadings;
   }
 
-  private static T ReadStruct<T>(MemoryMappedFile mmf, long offset, long elementSize) where T : struct
-  {
-    using var viewAccessor = mmf.CreateViewAccessor(
-      offset: offset,
-      size: elementSize,
-      access: MemoryMappedFileAccess.Read
-    );
-
-    viewAccessor.Read(0, out T reading);
-    return reading;
-  }
-
-  private static T[] ReadStructs<T>(MemoryMappedFile mmf, long offset, long numElements, int elementSize)
+  private static T[] ReadStructs<T>(MemoryMappedViewAccessor accessor, long offset, long numElements, int elementSize)
     where T : struct
   {
-    using var viewStream = mmf.CreateViewStream(
-      offset: offset,
-      size: elementSize * numElements,
-      access: MemoryMappedFileAccess.Read
-    );
-
     var results = new T[numElements];
     var byteBuffer = new byte[elementSize];
-    for (var idx = 0; idx < numElements; idx++)
+    var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
+    try
     {
-      if (viewStream.Read(byteBuffer) < elementSize)
+      var ptr = handle.AddrOfPinnedObject();
+      for (var idx = 0; idx < numElements; idx++)
       {
-        throw new InvalidDataException("Failed to read bytes from memory mapped file.");
-      }
-
-      var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
-      try
-      {
+        accessor.ReadArray(offset + (idx * (long)elementSize), byteBuffer, 0, elementSize);
         results[idx] = (T)(
-          Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T))
+          Marshal.PtrToStructure(ptr, typeof(T))
           ?? throw new InvalidDataException("Failed to convert bytes to struct.")
         );
       }
-      finally
-      {
-        handle.Free();
-      }
+    }
+    finally
+    {
+      handle.Free();
     }
 
     return results;

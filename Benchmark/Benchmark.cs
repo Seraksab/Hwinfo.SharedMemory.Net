@@ -4,7 +4,7 @@ using BenchmarkDotNet.Engines;
 namespace Hwinfo.SharedMemory.Benchmark;
 
 [MemoryDiagnoser]
-[SimpleJob(RunStrategy.ColdStart, warmupCount: 0)]
+[SimpleJob(RunStrategy.Throughput, warmupCount: 1)]
 public class Benchmark
 {
   private readonly SharedMemoryReader _sharedMemoryReader = new();
