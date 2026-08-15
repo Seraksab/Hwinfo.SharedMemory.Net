@@ -107,7 +107,11 @@ public class SharedMemoryReader : IDisposable
     GC.SuppressFinalize(this);
   }
 
-  private SensorReading[] ReadMemoryMappedFile(string fileName)
+  /// <summary>
+  /// Reads the sensor values from the memory mapped file with the given name.
+  /// Internal so tests can read from a snapshot instead of a live HWiNFO instance.
+  /// </summary>
+  internal SensorReading[] ReadMemoryMappedFile(string fileName)
   {
     // The cross-process mutex may be unavailable, so callers within this process are serialized
     // separately to keep the cache and the reads consistent

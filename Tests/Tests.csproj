@@ -24,6 +24,10 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Content Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\Hwinfo.SharedMemory\Hwinfo.SharedMemory.csproj" />
     </ItemGroup>
 
