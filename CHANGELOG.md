@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The mutex timeout is now honoured: `ReadLocal`/`ReadRemote` throw `TimeoutException` instead of
   reading potentially torn data. Reads within a process are additionally serialized by an internal
   lock, so the cached memory mapped files stay consistent even without the mutex.
+- An abandoned mutex (e.g. after an HWiNFO crash) no longer breaks the reader permanently
 
 ## 3.0.0 - 2026-02-09
 

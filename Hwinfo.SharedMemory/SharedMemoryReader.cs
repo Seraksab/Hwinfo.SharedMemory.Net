@@ -85,7 +85,7 @@ public class SharedMemoryReader : IDisposable
     lock (_lock)
     {
       var mutex = AcquireMutex();
-      var mutexAcquired = mutex != null && mutex.WaitOne(_mutexTimeout);
+      var mutexAcquired = mutex != null && WaitForMutex(mutex);
       if (mutex != null && !mutexAcquired)
       {
         throw new TimeoutException(
@@ -109,6 +109,23 @@ public class SharedMemoryReader : IDisposable
       {
         if (mutexAcquired) mutex?.ReleaseMutex();
       }
+    }
+  }
+
+  /// <summary>
+  /// Waits for the mutex and returns whether it was acquired within the configured timeout.
+  /// </summary>
+  private bool WaitForMutex(Mutex mutex)
+  {
+    try
+    {
+      return mutex.WaitOne(_mutexTimeout);
+    }
+    catch (AbandonedMutexException)
+    {
+      // The previous owner (e.g. a crashed HWiNFO) didn't release the mutex. The wait still
+      // succeeded, and we now own it -> continue
+      return true;
     }
   }
 
