@@ -273,6 +273,13 @@ public class SharedMemoryReader : IDisposable
     for (var idx = 0; idx < readings.Length; idx++)
     {
       ref readonly var reading = ref readings[idx];
+      if (reading.SensorIndex >= (uint)sensors.Length)
+      {
+        throw new InvalidDataException(
+          $"Reading {idx} refers to sensor {reading.SensorIndex}, but only {sensors.Length} sensors were read."
+        );
+      }
+
       ref readonly var sensor = ref sensors[(int)reading.SensorIndex];
       sensorReadings[idx] = new SensorReading(
         ReadingId: reading.ReadingId,

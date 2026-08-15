@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The shared memory version is validated and `InvalidDataException` is thrown for versions below 2
 - A shared memory file whose last poll is older than the new `stalenessTimeout` is reopened, 
   which detects an orphaned section that still carries a valid signature
+- A reading referring to a sensor index outside the sensor array now throws the documented
+  `InvalidDataException` instead of `IndexOutOfRangeException`
 
 ## 3.0.0 - 2026-02-09
 
