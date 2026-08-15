@@ -16,13 +16,24 @@ public class SharedMemoryReader : IDisposable
   private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
   private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
 
+  // "HWiS" in little-endian byte order.
+  // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
+  private const uint HWiNfoSensorsSignature = 0x53695748;
+
+  // Layout version of the shared memory.
+  // Newer versions only append fields (the offsets and element sizes are read from the header).
+  // Anything below this is rejected, anything above is accepted.
+  private const uint HWiNfoSensorsMinVersion = 2;
+
   private readonly int _mutexTimeout;
+  private readonly int _stalenessTimeout;
   private readonly Lock _lock = new();
   private readonly Dictionary<string, (MemoryMappedFile Mmf, MemoryMappedViewAccessor Accessor)> _cache = new();
 
-  // The mutex is advisory: HWiNFO runs elevated and its mutex may be inaccessible to a normal user
-  // process, while the shared memory itself still opens read-only. It is therefore opened lazily and
-  // best-effort, and reads proceed without it if it can't be obtained.
+  // The mutex is advisory:
+  // HWiNFO runs elevated and its mutex may be inaccessible to a normal user process, while the shared memory itself
+  // still opens read-only. It is therefore opened lazily and best-effort, and reads proceed without it if it can't be
+  // obtained.
   private Mutex? _mutex;
   private bool _mutexAccessDenied;
 
@@ -30,9 +41,15 @@ public class SharedMemoryReader : IDisposable
   /// Creates a new SharedMemoryReader
   /// </summary>
   /// <param name="mutexTimeout">The number of milliseconds to wait for the mutex, or Infinite (-1) to wait indefinitely</param>
-  public SharedMemoryReader(int mutexTimeout = 1000)
+  /// <param name="stalenessTimeout">
+  /// The number of milliseconds after which a shared memory file that hasn't been updated by HWiNFO is
+  /// considered stale and is reopened, or 0 to never consider it stale. Should be well above the polling
+  /// period configured in HWiNFO.
+  /// </param>
+  public SharedMemoryReader(int mutexTimeout = 1000, int stalenessTimeout = 60000)
   {
     _mutexTimeout = mutexTimeout;
+    _stalenessTimeout = stalenessTimeout;
   }
 
   /// <summary>
@@ -95,21 +112,82 @@ public class SharedMemoryReader : IDisposable
 
       try
       {
-        if (!_cache.TryGetValue(fileName, out var cached))
+        var accessor = GetOrOpenAccessor(fileName);
+        if (!TryReadHeader(accessor, out var sharedMem) || IsStale(sharedMem))
         {
-          var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
-          var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-          cached = (mmf, accessor);
-          _cache[fileName] = cached;
+          // The section we're mapped to has been torn down or is no longer being updated, e.g.
+          // because HWiNFO was restarted. Release it - holding on to it would keep serving stale
+          // data and could keep HWiNFO from creating a new section of a different size under the
+          // same name. The reopened section is used as-is, even if it still looks stale.
+          RemoveFromCache(fileName);
+          accessor = GetOrOpenAccessor(fileName);
+          if (!TryReadHeader(accessor, out sharedMem))
+          {
+            throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+          }
         }
 
-        return ReadSensorReadings(cached.Accessor);
+        if (sharedMem.Version < HWiNfoSensorsMinVersion)
+        {
+          throw new InvalidDataException(
+            $"'{fileName}' has the unsupported shared memory version {sharedMem.Version}, " +
+            $"expected {HWiNfoSensorsMinVersion} or higher."
+          );
+        }
+
+        return ReadSensorReadings(accessor, sharedMem);
       }
       finally
       {
         if (mutexAcquired) mutex?.ReleaseMutex();
       }
     }
+  }
+
+  /// <summary>
+  /// Returns the cached view accessor for the given file, opening and caching it if necessary.
+  /// </summary>
+  private MemoryMappedViewAccessor GetOrOpenAccessor(string fileName)
+  {
+    if (_cache.TryGetValue(fileName, out var cached)) return cached.Accessor;
+
+    var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
+    var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+    _cache[fileName] = (mmf, accessor);
+    return accessor;
+  }
+
+  /// <summary>
+  /// Removes the cached memory mapped file for the given file name and releases its handles.
+  /// </summary>
+  private void RemoveFromCache(string fileName)
+  {
+    if (!_cache.Remove(fileName, out var cached)) return;
+
+    cached.Accessor.Dispose();
+    cached.Mmf.Dispose();
+  }
+
+  /// <summary>
+  /// Reads the header and returns whether it carries a valid HWiNFO signature.
+  /// </summary>
+  private static bool TryReadHeader(MemoryMappedViewAccessor accessor, out SmSensorsSharedMem2 sharedMem)
+  {
+    accessor.Read(0, out sharedMem);
+    return sharedMem.Signature == HWiNfoSensorsSignature;
+  }
+
+  /// <summary>
+  /// Returns whether the last poll of HWiNFO is longer ago than the configured staleness timeout,
+  /// which indicates that the mapped section is an orphan that HWiNFO no longer updates.
+  /// </summary>
+  private bool IsStale(SmSensorsSharedMem2 sharedMem)
+  {
+    if (_stalenessTimeout <= 0) return false;
+
+    // PollTime is the unix time in seconds of the last update
+    var ageInSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - sharedMem.PollTime;
+    return ageInSeconds * 1000d > _stalenessTimeout;
   }
 
   /// <summary>
@@ -150,11 +228,8 @@ public class SharedMemoryReader : IDisposable
     return _mutex;
   }
 
-  private static SensorReading[] ReadSensorReadings(MemoryMappedViewAccessor accessor)
+  private static SensorReading[] ReadSensorReadings(MemoryMappedViewAccessor accessor, SmSensorsSharedMem2 sharedMem)
   {
-    // Read sharedMem
-    accessor.Read(0, out SmSensorsSharedMem2 sharedMem);
-
     // Read sensor data and reading data
     var sensors = ReadSensorData(accessor, sharedMem);
     var readings = ReadReadingData(accessor, sharedMem);

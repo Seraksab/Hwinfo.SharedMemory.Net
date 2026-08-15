@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reading potentially torn data. Reads within a process are additionally serialized by an internal
   lock, so the cached memory mapped files stay consistent even without the mutex.
 - An abandoned mutex (e.g. after an HWiNFO crash) no longer breaks the reader permanently
+- The header signature is validated on every read. A cached memory mapped file whose section was torn
+  down (e.g. after an HWiNFO restart) is now released and reopened instead of serving stale data.
+- The shared memory version is validated and `InvalidDataException` is thrown for versions below 2
+- A shared memory file whose last poll is older than the new `stalenessTimeout` is reopened, 
+  which detects an orphaned section that still carries a valid signature
 
 ## 3.0.0 - 2026-02-09
 
