@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 3.0.1 - 2026-08-15
 
+
 ### Changed 
 
 - The HWiNFO mutex is now treated as advisory: it's opened lazily, requesting only synchronization
   rights, and reads proceed without it if it's unavailable. Previously the constructor requested full
   access and threw `UnauthorizedAccessException` in any non-elevated process while HWiNFO was running.
+
+### Fixed
+
+- The mutex timeout is now honoured: `ReadLocal`/`ReadRemote` throw `TimeoutException` instead of
+  reading potentially torn data. Reads within a process are additionally serialized by an internal
+  lock, so the cached memory mapped files stay consistent even without the mutex.
 
 ## 3.0.0 - 2026-02-09
 

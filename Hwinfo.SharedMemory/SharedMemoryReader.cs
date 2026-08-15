@@ -17,6 +17,7 @@ public class SharedMemoryReader : IDisposable
   private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
 
   private readonly int _mutexTimeout;
+  private readonly Lock _lock = new();
   private readonly Dictionary<string, (MemoryMappedFile Mmf, MemoryMappedViewAccessor Accessor)> _cache = new();
 
   // The mutex is advisory: HWiNFO runs elevated and its mutex may be inaccessible to a normal user
@@ -40,7 +41,8 @@ public class SharedMemoryReader : IDisposable
   /// <returns>The sensor values</returns>
   /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
-  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception> 
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
+  /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   public IEnumerable<SensorReading> ReadLocal()
   {
     return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
@@ -54,7 +56,8 @@ public class SharedMemoryReader : IDisposable
   /// <exception cref="ArgumentOutOfRangeException">The index is negative.</exception>
   /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
-  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception> 
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
+  /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   public IEnumerable<SensorReading> ReadRemote(int index = 0)
   {
     if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
@@ -77,30 +80,34 @@ public class SharedMemoryReader : IDisposable
 
   private SensorReading[] ReadMemoryMappedFile(string fileName)
   {
-    var mutex = AcquireMutex();
-    try
+    // The cross-process mutex may be unavailable, so callers within this process are serialized
+    // separately to keep the cache and the reads consistent
+    lock (_lock)
     {
-      mutex?.WaitOne(_mutexTimeout);
-
-      if (!_cache.TryGetValue(fileName, out var cached))
+      var mutex = AcquireMutex();
+      var mutexAcquired = mutex != null && mutex.WaitOne(_mutexTimeout);
+      if (mutex != null && !mutexAcquired)
       {
-        var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
-        var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-        cached = (mmf, accessor);
-        _cache[fileName] = cached;
+        throw new TimeoutException(
+          $"Timed out after {_mutexTimeout} ms waiting for the mutex '{HWiNfoSensorsSm2Mutex}'."
+        );
       }
 
-      return ReadSensorReadings(cached.Accessor);
-    }
-    finally
-    {
       try
       {
-        mutex?.ReleaseMutex();
+        if (!_cache.TryGetValue(fileName, out var cached))
+        {
+          var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
+          var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+          cached = (mmf, accessor);
+          _cache[fileName] = cached;
+        }
+
+        return ReadSensorReadings(cached.Accessor);
       }
-      catch
+      finally
       {
-        // ignored
+        if (mutexAcquired) mutex?.ReleaseMutex();
       }
     }
   }
