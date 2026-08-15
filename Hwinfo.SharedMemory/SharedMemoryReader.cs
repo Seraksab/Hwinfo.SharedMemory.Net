@@ -36,6 +36,7 @@ public class SharedMemoryReader : IDisposable
   // obtained.
   private Mutex? _mutex;
   private bool _mutexAccessDenied;
+  private bool _disposed;
 
   /// <summary>
   /// Creates a new SharedMemoryReader
@@ -60,6 +61,7 @@ public class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public IEnumerable<SensorReading> ReadLocal()
   {
     return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
@@ -75,6 +77,7 @@ public class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public IEnumerable<SensorReading> ReadRemote(int index = 0)
   {
     if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
@@ -84,15 +87,24 @@ public class SharedMemoryReader : IDisposable
   /// <inheritdoc />
   public void Dispose()
   {
-    _mutex?.Dispose();
-    _mutex = null;
-    foreach (var value in _cache.Values)
+    // Taking the lock keeps a concurrent read from having its accessors disposed underneath it
+    lock (_lock)
     {
-      value.Accessor.Dispose();
-      value.Mmf.Dispose();
+      if (_disposed) return;
+      _disposed = true;
+
+      _mutex?.Dispose();
+      _mutex = null;
+      foreach (var value in _cache.Values)
+      {
+        value.Accessor.Dispose();
+        value.Mmf.Dispose();
+      }
+
+      _cache.Clear();
     }
 
-    _cache.Clear();
+    GC.SuppressFinalize(this);
   }
 
   private SensorReading[] ReadMemoryMappedFile(string fileName)
@@ -101,6 +113,8 @@ public class SharedMemoryReader : IDisposable
     // separately to keep the cache and the reads consistent
     lock (_lock)
     {
+      ObjectDisposedException.ThrowIf(_disposed, this);
+
       var mutex = AcquireMutex();
       var mutexAcquired = mutex != null && WaitForMutex(mutex);
       if (mutex != null && !mutexAcquired)

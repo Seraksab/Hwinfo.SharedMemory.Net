@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which detects an orphaned section that still carries a valid signature
 - A reading referring to a sensor index outside the sensor array now throws the documented
   `InvalidDataException` instead of `IndexOutOfRangeException`
+- `Dispose` is idempotent and no longer disposes the memory mapped files underneath a concurrent read.
 
 ## 3.0.0 - 2026-02-09
 
