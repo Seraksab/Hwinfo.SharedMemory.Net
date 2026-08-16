@@ -24,17 +24,27 @@ public readonly record struct SensorReadings(
 /// <summary>
 /// A single sensor reading.
 /// </summary>
+/// <param name="ReadingId">A unique ID of the reading within its <paramref name="Sensor"/>.</param>
+/// <param name="ReadingType">What the reading measures.</param>
+/// <param name="LabelOrig">The original label, e.g. "Chassis2 Fan".</param>
+/// <param name="LabelUser">The label displayed, which the user might have renamed.</param>
+/// <param name="Unit">The unit the values are in, e.g. "°C". Empty if the reading has none.</param>
+/// <param name="Value">The current value.</param>
+/// <param name="ValueMin">The lowest value HWiNFO has seen since it started monitoring.</param>
+/// <param name="ValueMax">The highest value HWiNFO has seen since it started monitoring.</param>
+/// <param name="ValueAvg">The average value HWiNFO has seen since it started monitoring.</param>
+/// <param name="Sensor">The sensor this reading belongs to.</param>
 public readonly record struct SensorReading(
-  uint ReadingId, // A unique ID of the reading within a particular sensor
-  SensorType ReadingType, // Type of sensor reading
-  string LabelOrig, // Original label (e.g. "Chassis2 Fan")
-  string LabelUser, // Label displayed, which might have been renamed by user
+  uint ReadingId,
+  SensorType ReadingType,
+  string LabelOrig,
+  string LabelUser,
   string Unit,
   double Value,
   double ValueMin,
   double ValueMax,
   double ValueAvg,
-  Sensor Sensor // The sensor this reading belongs to
+  Sensor Sensor
 );
 
 /// <summary>
@@ -42,11 +52,15 @@ public readonly record struct SensorReading(
 /// One instance is shared by all readings of that sensor and is kept across reads for as long as
 /// HWiNFO reports it unchanged.
 /// </summary>
+/// <param name="Id">A unique sensor ID, together with <paramref name="Instance"/>.</param>
+/// <param name="Instance">The instance of the sensor, together with <paramref name="Id"/>.</param>
+/// <param name="NameOrig">The original sensor name.</param>
+/// <param name="NameUser">The sensor name displayed, which the user might have renamed.</param>
 public sealed record Sensor(
-  uint Id, // A unique Sensor ID
-  uint Instance, // The instance of the sensor (together with Id forms a unique ID)
-  string NameOrig, // Original sensor name
-  string NameUser // Sensor name displayed, which might have been renamed by user
+  uint Id,
+  uint Instance,
+  string NameOrig,
+  string NameUser
 );
 
 /// <summary>
@@ -82,4 +96,4 @@ public enum SensorType
 
   /// <summary>Anything else, including reading types unknown to this library.</summary>
   Other
-};
+}

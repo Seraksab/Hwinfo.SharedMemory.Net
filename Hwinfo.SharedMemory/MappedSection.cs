@@ -303,14 +303,14 @@ internal sealed class MappedSection : IDisposable
       );
       if (!reusable || !strings.SequenceEqual(previousStrings))
       {
-        _labelsOrig[idx] = Decode(strings[..SmLayout.StringLength]);
-        _labelsUser[idx] = Decode(strings.Slice(SmLayout.StringLength, SmLayout.StringLength));
-        _units[idx] = Decode(strings.Slice(2 * SmLayout.StringLength, SmLayout.UnitLength));
+        _labelsOrig[idx] = Decode(element.Slice(SmLayout.ReadingLabelOrig, SmLayout.StringLength));
+        _labelsUser[idx] = Decode(element.Slice(SmLayout.ReadingLabelUser, SmLayout.StringLength));
+        _units[idx] = Decode(element.Slice(SmLayout.ReadingUnit, SmLayout.UnitLength));
       }
 
       readings[idx] = new SensorReading(
         ReadingId: MemoryMarshal.Read<uint>(element[SmLayout.ReadingId..]),
-        ReadingType: ToSensorType(MemoryMarshal.Read<uint>(element[..])),
+        ReadingType: ToSensorType(MemoryMarshal.Read<uint>(element[SmLayout.ReadingType..])),
         LabelOrig: _labelsOrig[idx],
         LabelUser: _labelsUser[idx],
         Unit: _units[idx],

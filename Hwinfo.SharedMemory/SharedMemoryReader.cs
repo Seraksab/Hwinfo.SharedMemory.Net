@@ -249,8 +249,7 @@ public class SharedMemoryReader : IDisposable
   }
 
   /// <summary>
-  /// Tries to open the HWiNFO mutex, requesting only the rights needed to synchronize with it.
-  /// Returns null if it doesn't exist (yet) or if access to it is denied.
+  /// Tries to open the HWiNFO mutex. Returns null if it doesn't exist (yet) or if access to it is denied.
   /// </summary>
   private Mutex? AcquireMutex()
   {
