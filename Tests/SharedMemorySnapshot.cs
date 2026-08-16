@@ -44,6 +44,9 @@ internal sealed class SharedMemorySnapshot : IDisposable
   /// <summary>The number of sensor elements the unmodified snapshot declares.</summary>
   internal static uint SensorCount => ReadUInt32(Snapshot, SensorSectionNumElementsOffset);
 
+  /// <summary>The signature of the unmodified snapshot, i.e. the one HWiNFO writes.</summary>
+  internal static uint Signature => ReadUInt32(Snapshot, SignatureOffset);
+
   private readonly MemoryMappedFile _mmf;
   private readonly MemoryMappedViewAccessor _accessor;
   private readonly uint _sensorSectionOffset;
@@ -85,6 +88,12 @@ internal sealed class SharedMemorySnapshot : IDisposable
     BitConverter.GetBytes(value).CopyTo(data, offset);
 
   internal static uint ReadUInt32(ReadOnlySpan<byte> data, int offset) => BitConverter.ToUInt32(data[offset..]);
+
+  /// <summary>
+  /// Overwrites the signature of the published section, which is what HWiNFO itself does while the
+  /// section is being torn down.
+  /// </summary>
+  internal void PatchSignature(uint signature) => _accessor.Write(SignatureOffset, signature);
 
   /// <summary>
   /// Overwrites the poll time of the published section.

@@ -368,6 +368,96 @@ public class SnapshotTests : IDisposable
     Assert.Throws<ArgumentOutOfRangeException>(() => _reader.ReadRemote(-1));
   }
 
+  [Fact]
+  public void TryRead_ShouldReturnTheSameResultAsRead()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var read = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var tried = _reader.TryReadMemoryMappedFile(snapshot.FileName, out var result);
+
+    Assert.True(tried);
+    Assert.Equal(SnapshotReadingCount, result.Readings.Length);
+    Assert.Equal(read.PollTime, result.PollTime);
+    Assert.Equal<SensorReading>(read.Readings, result.Readings);
+    Assert.Equal<Sensor>(read.Sensors, result.Sensors);
+  }
+
+  [Fact]
+  public void TryRead_UnknownFile_ShouldReturnFalseInsteadOfThrowing()
+  {
+    var tried = _reader.TryReadMemoryMappedFile(
+      $"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}", out var result
+    );
+
+    Assert.False(tried);
+    Assert.Equal(default, result);
+  }
+
+  [Fact]
+  public void TryRead_WithInvalidSignature_ShouldReturnFalseInsteadOfThrowing()
+  {
+    // A section that carries no valid header is one HWiNFO is tearing down or hasn't filled yet, so
+    // it reports "nothing to read" rather than the InvalidDataException the throwing read produces
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SignatureOffset, 0xDEADBEEF)
+    );
+
+    var tried = _reader.TryReadMemoryMappedFile(snapshot.FileName, out var result);
+
+    Assert.False(tried);
+    Assert.Equal(default, result);
+  }
+
+  [Fact]
+  public void TryRead_WithUnparsableSection_ShouldStillThrowInvalidData()
+  {
+    // The section is there and its header is valid, it just can't be read - which is a genuine
+    // failure and not the "HWiNFO isn't publishing" case TryRead reports as false
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionSizeOfElementOffset, 8u)
+    );
+
+    Assert.Throws<InvalidDataException>(() => _reader.TryReadMemoryMappedFile(snapshot.FileName, out _));
+  }
+
+  [Fact]
+  public void TryRead_UnknownFile_ShouldNotKeepTheReaderFromReadingAgain()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    Assert.False(_reader.TryReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}", out _));
+
+    Assert.True(_reader.TryReadMemoryMappedFile(snapshot.FileName, out var result));
+    Assert.Equal(SnapshotReadingCount, result.Readings.Length);
+  }
+
+  [Fact]
+  public void TryReadRemote_WithAnIndexThatIsNotConnected_ShouldReturnFalse()
+  {
+    var tried = _reader.TryReadRemote(999, out var result);
+
+    Assert.False(tried);
+    Assert.Equal(default, result);
+  }
+
+  [Fact]
+  public void TryReadRemote_WithNegativeIndex_ShouldThrowArgumentOutOfRange()
+  {
+    Assert.Throws<ArgumentOutOfRangeException>(() => _reader.TryReadRemote(-1, out _));
+  }
+
+  [Fact]
+  public void TryRead_AfterDispose_ShouldThrowObjectDisposed()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+    var reader = new SharedMemoryReader();
+    reader.ReadMemoryMappedFile(snapshot.FileName);
+    reader.Dispose();
+
+    Assert.Throws<ObjectDisposedException>(() => reader.TryReadMemoryMappedFile(snapshot.FileName, out _));
+  }
+
   [Theory]
   [InlineData(-1, 0)]
   [InlineData(0, -1)]

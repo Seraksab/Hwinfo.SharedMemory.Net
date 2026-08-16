@@ -70,6 +70,27 @@ public sealed class SharedMemoryReader : IDisposable
   }
 
   /// <summary>
+  /// Tries to read the sensor values of the local HWiNFO instance, without throwing if HWiNFO isn't
+  /// publishing them.
+  /// </summary>
+  /// <param name="readings">
+  /// The sensor values and the time HWiNFO last polled them, or <c>default</c> if there are none
+  /// </param>
+  /// <returns>
+  /// <c>false</c> if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
+  /// i.e. HWiNFO isn't running, has Shared Memory Support turned off, or is currently starting up or
+  /// shutting down. 
+  /// </returns>
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
+  /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
+  public bool TryReadLocal(out SensorReadings readings)
+  {
+    return TryReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal, out readings);
+  }
+
+  /// <summary>
   /// Reads the sensor values of the remote HWiNFO instance with the given connection index
   /// </summary>
   /// <param name="index">The connection index starting with 0></param>
@@ -84,6 +105,30 @@ public sealed class SharedMemoryReader : IDisposable
   {
     if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
     return ReadMemoryMappedFile($"{HWiNfoSensorsMapFileNameRemote}{index}");
+  }
+
+  /// <summary>
+  /// Tries to read the sensor values of the remote HWiNFO instance with the given connection index,
+  /// without throwing if there is no such connection.
+  /// </summary>
+  /// <param name="index">The connection index starting with 0</param>
+  /// <param name="readings">
+  /// The sensor values and the time HWiNFO last polled them, or <c>default</c> if there are none
+  /// </param>
+  /// <returns>
+  /// <c>false</c> if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
+  /// i.e. there is no remote connection at that index, or the instance behind it is currently
+  /// starting up or shutting down.
+  /// </returns>
+  /// <exception cref="ArgumentOutOfRangeException">The index is negative.</exception>
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
+  /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
+  /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
+  public bool TryReadRemote(int index, out SensorReadings readings)
+  {
+    if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
+    return TryReadMemoryMappedFile($"{HWiNfoSensorsMapFileNameRemote}{index}", out readings);
   }
 
   /// <inheritdoc />
@@ -112,6 +157,30 @@ public sealed class SharedMemoryReader : IDisposable
   /// </summary>
   internal SensorReadings ReadMemoryMappedFile(string fileName)
   {
+    ReadMemoryMappedFile(fileName, throwIfUnavailable: true, out var readings);
+    return readings;
+  }
+
+  /// <summary>
+  /// Tries to read the sensor values from the memory mapped file with the given name.
+  /// Internal so tests can read from a snapshot instead of a live HWiNFO instance.
+  /// </summary>
+  internal bool TryReadMemoryMappedFile(string fileName, out SensorReadings readings)
+  {
+    return ReadMemoryMappedFile(fileName, throwIfUnavailable: false, out readings);
+  }
+
+  /// <summary>
+  /// Reads the sensor values from the memory mapped file with the given name.
+  /// </summary>
+  /// <param name="fileName">The name of the memory mapped file to read.</param>
+  /// <param name="throwIfUnavailable">
+  /// Whether a missing section or one without a valid HWiNFO header throws, rather than returning
+  /// <c>false</c>. Everything else throws either way.
+  /// </param>
+  /// <param name="readings">The sensor values that were read, or <c>default</c> if there were none.</param>
+  private bool ReadMemoryMappedFile(string fileName, bool throwIfUnavailable, out SensorReadings readings)
+  {
     // The cross-process mutex may be unavailable, so callers within this process are serialized
     // separately to keep the cache and the reads consistent
     lock (_lock)
@@ -129,7 +198,11 @@ public sealed class SharedMemoryReader : IDisposable
 
       try
       {
-        var section = GetOrOpenSection(fileName);
+        readings = default;
+
+        var section = GetOrOpenSection(fileName, throwIfUnavailable);
+        if (section == null) return false;
+
         if (!section.TryReadHeader(out var header) || IsStale(header))
         {
           // The section we're mapped to has been torn down or is no longer being updated, e.g.
@@ -137,17 +210,23 @@ public sealed class SharedMemoryReader : IDisposable
           // data and could keep HWiNFO from creating a new section of a different size under the
           // same name. The reopened section is used as-is, even if it still looks stale.
           RemoveFromCache(fileName);
-          section = GetOrOpenSection(fileName);
+          section = GetOrOpenSection(fileName, throwIfUnavailable);
+          if (section == null) return false;
           if (!section.TryReadHeader(out header))
           {
-            throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+            if (throwIfUnavailable)
+            {
+              throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+            }
+
+            return false;
           }
         }
 
         for (var attempt = 0;; attempt++)
         {
           ValidateVersion(header, fileName);
-          if (section.TryRead(header, out var readings)) return readings;
+          if (section.TryRead(header, out readings)) return true;
 
           if (attempt + 1 >= MaxReadAttempts)
           {
@@ -164,7 +243,13 @@ public sealed class SharedMemoryReader : IDisposable
 
           if (!section.TryReadHeader(out header))
           {
-            throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+            // The section was torn down underneath the retry, so there is nothing left to read
+            if (throwIfUnavailable)
+            {
+              throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+            }
+
+            return false;
           }
         }
       }
@@ -177,12 +262,27 @@ public sealed class SharedMemoryReader : IDisposable
 
   /// <summary>
   /// Returns the cached section for the given file, opening and caching it if necessary.
+  /// Returns <c>null</c> if the file doesn't exist and <paramref name="throwIfMissing"/> is <c>false</c>.
   /// </summary>
-  private MappedSection GetOrOpenSection(string fileName)
+  /// <exception cref="FileNotFoundException">
+  /// The shared memory file does not exist and <paramref name="throwIfMissing"/> is <c>true</c>.
+  /// </exception>
+  private MappedSection? GetOrOpenSection(string fileName, bool throwIfMissing)
   {
     if (_cache.TryGetValue(fileName, out var cached)) return cached;
 
-    var section = new MappedSection(fileName, _reuseUnchangedPolls);
+    MappedSection section;
+    try
+    {
+      section = new MappedSection(fileName, _reuseUnchangedPolls);
+    }
+    catch (FileNotFoundException) when (!throwIfMissing)
+    {
+      // There is no such section, i.e. HWiNFO isn't publishing one. OpenExisting has no Try variant,
+      // so this is the only way to tell without the caller having to catch it themselves.
+      return null;
+    }
+
     _cache[fileName] = section;
     return section;
   }

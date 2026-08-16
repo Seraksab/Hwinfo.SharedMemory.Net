@@ -133,6 +133,29 @@ public class SectionChangeTests : IDisposable
   }
 
   [Fact]
+  public void TryRead_WhenTheSectionIsTornDown_ShouldReturnFalseAndReadAgainOnceItIsBack()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    Assert.True(_reader.TryReadMemoryMappedFile(snapshot.FileName, out var first));
+    Assert.Equal(FullReadingCount, first.Readings.Length);
+
+    // HWiNFO overwrites the signature while it tears the section down, which is the same "no data"
+    // condition as a section that isn't there at all
+    snapshot.PatchSignature(0xDEADBEEF);
+    Assert.False(_reader.TryReadMemoryMappedFile(snapshot.FileName, out var torn));
+    Assert.Equal(default, torn);
+
+    // The failed read released the cached section instead of poisoning it, so the reader picks the
+    // section up again as soon as it carries a valid header
+    snapshot.PatchSignature(SharedMemorySnapshot.Signature);
+    snapshot.PatchPollTimeToNow();
+    Assert.True(_reader.TryReadMemoryMappedFile(snapshot.FileName, out var second));
+    Assert.Equal(FullReadingCount, second.Readings.Length);
+    Assert.Equal<SensorReading>(first.Readings, second.Readings);
+  }
+
+  [Fact]
   public void Read_WithReuseUnchangedPolls_ShouldReadAgainOnceThePollTimeMoves()
   {
     using var snapshot = SharedMemorySnapshot.Publish();

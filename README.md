@@ -36,6 +36,23 @@ foreach (var sensorReading in result.Readings)
 `ReadRemote(index)` reads a remote HWiNFO instance instead of the local one, `index` being the
 connection index starting at 0.
 
+### Reading without exceptions
+
+"HWiNFO isn't running" is a normal condition for a polling loop, not an error, so `TryReadLocal` and
+`TryReadRemote` report it as `false` instead of throwing:
+
+```csharp
+if (reader.TryReadLocal(out var result))
+{
+  // ...
+}
+```
+
+They return `false` if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
+i.e. HWiNFO isn't running, Shared Memory Support is off, there is no remote connection at that index,
+or the instance is currently starting up or shutting down. Everything else - a section that can't be
+parsed, a mutex that can't be acquired, a disposed reader - still throws, see [Errors](#errors).
+
 ### What a read returns
 
 `ReadLocal` and `ReadRemote` return a `SensorReadings`, which carries the `Readings` together with the
@@ -88,15 +105,16 @@ second this can serve values that are up to a second old - which an unchanged `P
 ## Errors
 
 - **`FileNotFoundException`** - HWiNFO isn't running, Shared Memory Support is off, or there is no
-  remote connection at that index. This is the expected signal for "no data available", not a bug.
+  remote connection at that index. This is the expected signal for "no data available", not a bug -
+  `TryReadLocal`/`TryReadRemote` report it as `false` instead.
 - **`TimeoutException`** - HWiNFO's mutex was not acquired within `MutexTimeout`.
 - **`InvalidDataException`** - the section could not be parsed: bad signature, unsupported version, or
   a section that doesn't fit the mapping.
 - **`UnauthorizedAccessException`** - the section exists but this process may not open it.
 - **`ObjectDisposedException`** - the reader has been disposed.
 
-`ReadRemote` additionally throws `ArgumentOutOfRangeException` for a negative index, and the
-constructor throws it for a negative or oversized timeout.
+`ReadRemote` and `TryReadRemote` additionally throw `ArgumentOutOfRangeException` for a negative index,
+and the constructor throws it for a negative or oversized timeout.
 
 ## Benchmark
 

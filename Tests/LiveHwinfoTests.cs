@@ -22,6 +22,15 @@ public class LiveHwinfoTests : IDisposable
   }
 
   [Fact]
+  public void TryReadLocal_ShouldReturnSensorValues()
+  {
+    Assert.True(_reader.TryReadLocal(out var sensorValues));
+    Assert.True(sensorValues.Readings.Length > 0);
+    Assert.True(sensorValues.Sensors.Length > 0);
+    Assert.NotEqual(default, sensorValues.PollTime);
+  }
+
+  [Fact]
   public void ReadRemote_0_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadRemote(0);
