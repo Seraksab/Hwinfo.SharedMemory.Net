@@ -11,9 +11,14 @@ namespace Hwinfo.SharedMemory;
 /// once a second even if it polls more often.
 /// </param>
 /// <param name="Readings">The sensor readings of that poll.</param>
+/// <param name="Sensors">
+/// Every sensor HWiNFO published, in the order it published them. This includes sensors that have no
+/// readings of their own and therefore appear nowhere in <paramref name="Readings"/>.
+/// </param>
 public readonly record struct SensorReadings(
   DateTimeOffset PollTime,
-  IReadOnlyList<SensorReading> Readings
+  IReadOnlyList<SensorReading> Readings,
+  IReadOnlyList<Sensor> Sensors
 );
 
 /// <summary>

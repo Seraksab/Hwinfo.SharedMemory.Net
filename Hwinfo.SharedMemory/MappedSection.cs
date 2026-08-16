@@ -48,6 +48,10 @@ internal sealed class MappedSection : IDisposable
   private long _lastPollTime = -1;
   private ReadOnlyCollection<SensorReading>? _lastReadings;
 
+  // The sensors as they are handed out: a copy of _sensors, taken whenever one of them changed, so
+  // that a result already given to a caller never changes underneath them
+  private ReadOnlyCollection<Sensor>? _sensorsView;
+
   // "HWiS" in little-endian byte order.
   // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
   private const uint HWiNfoSensorsSignature = 0x53695748;
@@ -122,11 +126,12 @@ internal sealed class MappedSection : IDisposable
     // is handed out as an immutable collection, so the same instance can be shared by every caller.
     if (_reuseUnchangedPolls
         && _lastReadings is { } cached
+        && _sensorsView is { } cachedSensors
         && _lastPollTime == header.PollTime
         && _sensorCount == sensorCount
         && _readingCount == readingCount)
     {
-      readings = new SensorReadings(pollTime, cached);
+      readings = new SensorReadings(pollTime, cached, cachedSensors);
       return true;
     }
 
@@ -149,7 +154,8 @@ internal sealed class MappedSection : IDisposable
       return false;
     }
 
-    readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount));
+    // Parse fills _sensorsView along with the readings, so it is never null once it returns
+    readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount), _sensorsView!);
     _lastPollTime = header.PollTime;
     return true;
   }
@@ -212,6 +218,7 @@ internal sealed class MappedSection : IDisposable
     _readingCount = readingCount;
     _decodedStringsValid = false;
     _lastReadings = null;
+    _sensorsView = null;
     _lastPollTime = -1;
   }
 
@@ -252,6 +259,7 @@ internal sealed class MappedSection : IDisposable
 
     ReadOnlySpan<byte> sensorBytes = _sensorBytes;
     ReadOnlySpan<byte> previousSensorBytes = _previousSensorBytes;
+    var sensorsChanged = false;
     for (var idx = 0; idx < sensorCount; idx++)
     {
       var elementOffset = idx * SmLayout.SensorElementSize;
@@ -262,6 +270,7 @@ internal sealed class MappedSection : IDisposable
       // unchanged sensor and the readings can keep pointing at the instance they already share
       if (reusable && element.SequenceEqual(previous)) continue;
 
+      sensorsChanged = true;
       _sensors[idx] = new Sensor(
         Id: MemoryMarshal.Read<uint>(element[SmLayout.SensorId..]),
         Instance: MemoryMarshal.Read<uint>(element[SmLayout.SensorInstance..]),
@@ -319,6 +328,14 @@ internal sealed class MappedSection : IDisposable
     (_sensorBytes, _previousSensorBytes) = (_previousSensorBytes, _sensorBytes);
     (_readingBytes, _previousReadingBytes) = (_previousReadingBytes, _readingBytes);
     _decodedStringsValid = true;
+
+    // A copy, because _sensors keeps being reused: handing out the array itself would let a later
+    // read change a result a caller is still holding. It is only taken when a sensor actually
+    // changed, which after the first read practically never happens.
+    if (sensorsChanged || _sensorsView is null)
+    {
+      _sensorsView = new ReadOnlyCollection<Sensor>((Sensor[])_sensors.Clone());
+    }
 
     var result = new ReadOnlyCollection<SensorReading>(readings);
     // Only kept when it can actually be handed out again, so the last result isn't held alive for

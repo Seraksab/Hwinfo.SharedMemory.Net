@@ -7,7 +7,8 @@ public class SnapshotTests
 {
   private const int SnapshotReadingCount = 470;
 
-  // One of the snapshot's 25 sensors ("ASUS EC") has no readings of its own
+  // One of the snapshot's 25 sensors ("ASUS EC") has no readings of its own, so only 24 of them are
+  // reachable through the readings
   private const int SnapshotSensorCount = 24;
 
   private readonly SharedMemoryReader _reader = new();
@@ -111,6 +112,41 @@ public class SnapshotTests
       Assert.Same(pair.Second.LabelUser, pair.First.LabelUser);
       Assert.Same(pair.Second.Unit, pair.First.Unit);
     });
+  }
+
+  [Fact]
+  public void Read_ShouldReturnEverySensorIncludingThoseWithoutReadings()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var result = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(SnapshotSensorCount + 1, result.Sensors.Count);
+    Assert.All(result.Sensors, sensor => Assert.NotEmpty(sensor.NameOrig));
+
+    // Every reading points at the very instance from the sensor list, and the one sensor without
+    // readings is reachable through that list alone
+    Assert.All(
+      result.Readings,
+      reading => Assert.Contains(result.Sensors, sensor => ReferenceEquals(sensor, reading.Sensor))
+    );
+    var withoutReadings = result.Sensors
+      .Where(sensor => result.Readings.All(reading => !ReferenceEquals(reading.Sensor, sensor)))
+      .ToList();
+    Assert.Single(withoutReadings);
+  }
+
+  [Fact]
+  public void Read_ShouldNotHandOutTheSensorArrayItReuses()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.IsNotType<Sensor[]>(first.Sensors);
+    // Nothing changed, so the same copy is handed out again rather than a new one
+    Assert.Same(first.Sensors, second.Sensors);
   }
 
   [Fact]

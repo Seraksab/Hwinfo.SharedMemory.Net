@@ -16,6 +16,7 @@ public class LiveHwinfoTests
     var sensorValues = _reader.ReadLocal();
     Assert.NotNull(sensorValues.Readings);
     Assert.True(sensorValues.Readings.Count > 0);
+    Assert.True(sensorValues.Sensors.Count > 0);
     Assert.NotEqual(default, sensorValues.PollTime);
   }
 
