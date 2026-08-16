@@ -5,31 +5,114 @@
 
 A small and simple library to read sensor values shared by [HWiNFO](https://www.hwinfo.com/) via shared memory.
 
-## Prerequisites
+## Requirements
 
-Enable **Shared Memory Support** in HWiNFO.  
-If this isn't enabled, the reader will return no values.
+- Windows, .NET 10 or later
+- [HWiNFO](https://www.hwinfo.com/) running with **Shared Memory Support** enabled
+
+Without that setting HWiNFO publishes no shared memory section at all, so every read throws
+`FileNotFoundException` - see [Errors](#errors).
+
+## Installation
+
+```
+dotnet add package Hwinfo.SharedMemory.Net
+```
 
 ## Usage
 
 ```csharp
-var reader = new SharedMemoryReader();
-foreach (var sensorReading in reader.ReadLocal())
+using var reader = new SharedMemoryReader();
+var result = reader.ReadLocal();
+
+Console.Out.WriteLine($"HWiNFO last polled at {result.PollTime:HH:mm:ss}");
+foreach (var sensorReading in result.Readings)
 {
-  Console.Out.WriteLine(sensorReading);
+  Console.Out.WriteLine($"{sensorReading.Sensor.NameUser}: {sensorReading.LabelUser} = " +
+                        $"{sensorReading.Value} {sensorReading.Unit}");
 }
 ```
 
+`ReadRemote(index)` reads a remote HWiNFO instance instead of the local one, `index` being the
+connection index starting at 0.
+
+### What a read returns
+
+`ReadLocal` and `ReadRemote` return a `SensorReadings`, which carries the `Readings` together with the
+`PollTime` at which HWiNFO produced them, so a caller polling faster than HWiNFO can tell new values
+from a repeat of the previous ones.\
+It also carries `Sensors`, every sensor HWiNFO published - including those that have no readings of
+their own and therefore do not appear in any `SensorReading`:
+
+```csharp
+foreach (var sensor in result.Sensors)
+{
+  Console.Out.WriteLine($"{sensor.NameUser} ({sensor.Id}/{sensor.Instance})");
+}
+```
+
+The same `Sensor` instance is shared by all readings of that sensor and is kept across reads for as
+long as HWiNFO reports it unchanged, so reference equality is a valid way to group or key by sensor.
+
+## Configuration
+
+All of the reader's settings live on `SharedMemoryReaderOptions`, each of them optional:
+
+| Option                | Default  | Meaning                                                                            |
+|-----------------------|----------|------------------------------------------------------------------------------------|
+| `MutexTimeout`        | 1 second | How long a read waits for HWiNFO's mutex before it throws a `TimeoutException`     |
+| `StalenessTimeout`    | 1 minute | How long a section may go without an update before it is reopened; `Zero` to never |
+| `ReuseUnchangedPolls` | `false`  | Whether to hand out the previous result while HWiNFO's `PollTime` is unchanged     |
+
+### Reusing unchanged polls
+
+If you poll more often than HWiNFO updates its shared memory, you can let the reader hand out the previous result
+instead of reading again:
+
+```csharp
+using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { ReuseUnchangedPolls = true });
+```
+
+Note that HWiNFO reports its poll time in whole seconds, so with a polling period configured below one
+second this can serve values that are up to a second old - which an unchanged `PollTime` makes visible.
+
+## Lifetime and threading
+
+- **Keep the reader and reuse it.** It caches the memory mapping and everything it decodes from it, so
+  a steady-state read allocates little more than the result itself. Creating one per read throws that
+  away and reopens the section every time.
+- **A reader is safe to use from multiple threads.** Reads are serialized internally.
+- **Dispose it when you're done.** `SharedMemoryReader` is `IDisposable` and holds the open mapping
+  until it is disposed.
+
+## Errors
+
+- **`FileNotFoundException`** - HWiNFO isn't running, Shared Memory Support is off, or there is no
+  remote connection at that index. This is the expected signal for "no data available", not a bug.
+- **`TimeoutException`** - HWiNFO's mutex was not acquired within `MutexTimeout`.
+- **`InvalidDataException`** - the section could not be parsed: bad signature, unsupported version, or
+  a section that doesn't fit the mapping.
+- **`UnauthorizedAccessException`** - the section exists but this process may not open it.
+- **`ObjectDisposedException`** - the reader has been disposed.
+
+`ReadRemote` additionally throws `ArgumentOutOfRangeException` for a negative index, and the
+constructor throws it for a negative or oversized timeout.
+
 ## Benchmark
 
-| Method           |     Mean |    Error |   StdDev |    Gen0 |   Gen1 | Allocated |
-|------------------|---------:|---------:|---------:|--------:|-------:|----------:|
-| ReadSharedMemory | 95.88 us | 0.828 us | 0.774 us | 13.7939 | 3.5400 | 225.93 KB |
+Reading 470 readings of 25 sensors.\
+`ReadSharedMemoryReusingPolls` is the same read with `ReuseUnchangedPolls` enabled, i.e. the poll time 
+hasn't moved and the previous result is handed out:
+
+| Method                       |         Mean | Ratio | Allocated |
+|------------------------------|-------------:|------:|----------:|
+| ReadSharedMemory             | 38,178.99 ns | 1.000 |   33888 B |
+| ReadSharedMemoryReusingPolls |     61.97 ns | 0.002 |         - |
 
 Run on:
 
-- Windows 11 Pro 25H2
-- .NET 10.0.102
+- Windows 11 Pro
+- .NET 10.0.111
 - CPU: AMD Ryzen 9 7900X
 - RAM: DDR5-6200 CL30
 
