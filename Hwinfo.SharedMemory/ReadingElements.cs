@@ -5,7 +5,6 @@
 /// </summary>
 public readonly record struct SensorReading(
   uint ReadingId,          // A unique ID of the reading within a particular sensor
-  uint SensorIndex,        // This is the index of sensor in the Sensors[] array to which this reading belongs to
   SensorType ReadingType,  // Type of sensor reading
   string LabelOrig,        // Original label (e.g. "Chassis2 Fan")
   string LabelUser,        // Label displayed, which might have been renamed by user
@@ -14,10 +13,19 @@ public readonly record struct SensorReading(
   double ValueMin,
   double ValueMax,
   double ValueAvg,
-  uint SensorId,           // A unique Sensor ID
-  uint SensorInstance,     // The instance of the sensor (together with dwSensorID forms a unique ID)
-  string SensorNameOrig,   // Original sensor name
-  string SensorNameUser    // Sensor name displayed, which might have been renamed by user
+  Sensor Sensor            // The sensor this reading belongs to
+);
+
+/// <summary>
+/// The sensor a <see cref="SensorReading"/> belongs to.
+/// One instance is shared by all readings of that sensor and is kept across reads for as long as
+/// HWiNFO reports it unchanged.
+/// </summary>
+public sealed record Sensor(
+  uint Id,          // A unique Sensor ID
+  uint Instance,    // The instance of the sensor (together with Id forms a unique ID)
+  string NameOrig,  // Original sensor name
+  string NameUser   // Sensor name displayed, which might have been renamed by user
 );
 
 /// <summary>

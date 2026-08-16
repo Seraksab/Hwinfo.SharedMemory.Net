@@ -12,14 +12,21 @@ internal sealed class SharedMemorySnapshot : IDisposable
   internal const int SignatureOffset = 0;
   internal const int VersionOffset = 4;
   internal const int PollTimeOffset = 12;
+  internal const int SensorSectionSizeOfElementOffset = 24;
   internal const int SensorSectionNumElementsOffset = 28;
   internal const int ReadingSectionOffsetOffset = 32;
+  internal const int ReadingSectionSizeOfElementOffset = 36;
 
   // Offset of SensorIndex within a reading element
   internal const int ReadingSensorIndexOffset = 4;
 
   private static readonly byte[] Snapshot =
     File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestData", "hwinfo-sm2-snapshot.bin"));
+
+  /// <summary>
+  /// The raw bytes of the snapshot, as dumped from a live section.
+  /// </summary>
+  internal static ReadOnlySpan<byte> Bytes => Snapshot;
 
   private readonly MemoryMappedFile _mmf;
   private readonly MemoryMappedViewAccessor _accessor;
@@ -56,7 +63,7 @@ internal sealed class SharedMemorySnapshot : IDisposable
   internal static void Write(byte[] data, int offset, long value) =>
     BitConverter.GetBytes(value).CopyTo(data, offset);
 
-  internal static uint ReadUInt32(byte[] data, int offset) => BitConverter.ToUInt32(data, offset);
+  internal static uint ReadUInt32(ReadOnlySpan<byte> data, int offset) => BitConverter.ToUInt32(data[offset..]);
 
   public void Dispose()
   {

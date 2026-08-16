@@ -5,14 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 3.0.1 - 2026-08-15
+## 4.0.0 - 2026-08-16
 
+### Added
 
-### Changed 
+- `reuseUnchangedPolls`: an opt-in constructor flag that hands out the previous result while
+  HWiNFO's poll time is unchanged, which makes reads more frequent than HWiNFO's polling period
+  practically free (56 ns and no allocation). Off by default, because HWiNFO reports its poll time
+  in whole seconds and a polling period below one second would make it serve values up to a second
+  old.
+
+### Changed
 
 - The HWiNFO mutex is now treated as advisory: it's opened lazily, requesting only synchronization
   rights, and reads proceed without it if it's unavailable. Previously the constructor requested full
   access and threw `UnauthorizedAccessException` in any non-elevated process while HWiNFO was running.
+- `ReadLocal` and `ReadRemote` return `IReadOnlyList<SensorReading>` instead of `IEnumerable<SensorReading>`,
+  so callers no longer need a `ToList()` to get a count or an indexer.
+- The sensor a reading belongs to moved out of `SensorReading` into a `Sensor` record. One `Sensor`
+  instance is now shared by all of its readings rather than being copied.
+- Reads are now about 2.7x faster and allocate about 7x less: the benchmark of 470 readings went from
+  99.7 µs and 237 KB (which included the `ToList()` it needed) to 36.3 µs and 33 KB.
 
 ### Fixed
 
@@ -23,11 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The header signature is validated on every read. A cached memory mapped file whose section was torn
   down (e.g. after an HWiNFO restart) is now released and reopened instead of serving stale data.
 - The shared memory version is validated and `InvalidDataException` is thrown for versions below 2
-- A shared memory file whose last poll is older than the new `stalenessTimeout` is reopened, 
+- A shared memory file whose last poll is older than the new `stalenessTimeout` is reopened,
   which detects an orphaned section that still carries a valid signature
 - A reading referring to a sensor index outside the sensor array now throws the documented
   `InvalidDataException` instead of `IndexOutOfRangeException`
 - `Dispose` is idempotent and no longer disposes the memory mapped files underneath a concurrent read.
+- A read that lands in the window in which HWiNFO republishes its readings (it drops the element
+  count to 0 and counts it back up) is now detected and retried instead of returning a truncated
+  set of readings. `InvalidDataException` is thrown if it doesn't succeed within five attempts.
+- The sensor and reading sections are checked against the size of the mapping, and their element
+  size against the minimum the layout needs, before anything is read from them
 
 ## 3.0.0 - 2026-02-09
 

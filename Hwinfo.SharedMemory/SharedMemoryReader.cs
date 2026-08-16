@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.MemoryMappedFiles;
-using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace Hwinfo.SharedMemory;
@@ -16,19 +14,21 @@ public class SharedMemoryReader : IDisposable
   private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
   private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
 
-  // "HWiS" in little-endian byte order.
-  // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
-  private const uint HWiNfoSensorsSignature = 0x53695748;
-
   // Layout version of the shared memory.
   // Newer versions only append fields (the offsets and element sizes are read from the header).
   // Anything below this is rejected, anything above is accepted.
   private const uint HWiNfoSensorsMinVersion = 2;
 
+  // How often a read is retried when HWiNFO republishes the section underneath it, and how long the
+  // first retry backs off before it does (doubling with every further attempt)
+  private const int MaxReadAttempts = 5;
+  private const int ReadRetrySpins = 1000;
+
   private readonly int _mutexTimeout;
   private readonly int _stalenessTimeout;
+  private readonly bool _reuseUnchangedPolls;
   private readonly Lock _lock = new();
-  private readonly Dictionary<string, (MemoryMappedFile Mmf, MemoryMappedViewAccessor Accessor)> _cache = new();
+  private readonly Dictionary<string, MappedSection> _cache = new();
 
   // The mutex is advisory:
   // HWiNFO runs elevated and its mutex may be inaccessible to a normal user process, while the shared memory itself
@@ -47,22 +47,29 @@ public class SharedMemoryReader : IDisposable
   /// considered stale and is reopened, or 0 to never consider it stale. Should be well above the polling
   /// period configured in HWiNFO.
   /// </param>
-  public SharedMemoryReader(int mutexTimeout = 1000, int stalenessTimeout = 60000)
+  /// <param name="reuseUnchangedPolls">
+  /// Whether to hand out the previous result instead of reading the shared memory again while HWiNFO's
+  /// poll time is unchanged, which makes reads that are more frequent than HWiNFO's polling period
+  /// almost free. HWiNFO reports its poll time in whole seconds, so with a polling period below one
+  /// second this can return values that are up to a second old.
+  /// </param>
+  public SharedMemoryReader(int mutexTimeout = 1000, int stalenessTimeout = 60000, bool reuseUnchangedPolls = false)
   {
     _mutexTimeout = mutexTimeout;
     _stalenessTimeout = stalenessTimeout;
+    _reuseUnchangedPolls = reuseUnchangedPolls;
   }
 
   /// <summary>
   /// Reads the sensor values of the local HWiNFO instance
   /// </summary>
   /// <returns>The sensor values</returns>
-  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
-  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
+  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception>
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
-  public IEnumerable<SensorReading> ReadLocal()
+  public IReadOnlyList<SensorReading> ReadLocal()
   {
     return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
   }
@@ -73,12 +80,12 @@ public class SharedMemoryReader : IDisposable
   /// <param name="index">The connection index starting with 0></param>
   /// <returns>The sensor values</returns>
   /// <exception cref="ArgumentOutOfRangeException">The index is negative.</exception>
-  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception> 
-  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception> 
+  /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception>
+  /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
-  public IEnumerable<SensorReading> ReadRemote(int index = 0)
+  public IReadOnlyList<SensorReading> ReadRemote(int index = 0)
   {
     if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
     return ReadMemoryMappedFile($"{HWiNfoSensorsMapFileNameRemote}{index}");
@@ -87,7 +94,7 @@ public class SharedMemoryReader : IDisposable
   /// <inheritdoc />
   public void Dispose()
   {
-    // Taking the lock keeps a concurrent read from having its accessors disposed underneath it
+    // Taking the lock keeps a concurrent read from having its section disposed underneath it
     lock (_lock)
     {
       if (_disposed) return;
@@ -95,10 +102,9 @@ public class SharedMemoryReader : IDisposable
 
       _mutex?.Dispose();
       _mutex = null;
-      foreach (var value in _cache.Values)
+      foreach (var section in _cache.Values)
       {
-        value.Accessor.Dispose();
-        value.Mmf.Dispose();
+        section.Dispose();
       }
 
       _cache.Clear();
@@ -111,7 +117,7 @@ public class SharedMemoryReader : IDisposable
   /// Reads the sensor values from the memory mapped file with the given name.
   /// Internal so tests can read from a snapshot instead of a live HWiNFO instance.
   /// </summary>
-  internal SensorReading[] ReadMemoryMappedFile(string fileName)
+  internal IReadOnlyList<SensorReading> ReadMemoryMappedFile(string fileName)
   {
     // The cross-process mutex may be unavailable, so callers within this process are serialized
     // separately to keep the cache and the reads consistent
@@ -130,30 +136,44 @@ public class SharedMemoryReader : IDisposable
 
       try
       {
-        var accessor = GetOrOpenAccessor(fileName);
-        if (!TryReadHeader(accessor, out var sharedMem) || IsStale(sharedMem))
+        var section = GetOrOpenSection(fileName);
+        if (!section.TryReadHeader(out var header) || IsStale(header))
         {
           // The section we're mapped to has been torn down or is no longer being updated, e.g.
           // because HWiNFO was restarted. Release it - holding on to it would keep serving stale
           // data and could keep HWiNFO from creating a new section of a different size under the
           // same name. The reopened section is used as-is, even if it still looks stale.
           RemoveFromCache(fileName);
-          accessor = GetOrOpenAccessor(fileName);
-          if (!TryReadHeader(accessor, out sharedMem))
+          section = GetOrOpenSection(fileName);
+          if (!section.TryReadHeader(out header))
           {
             throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
           }
         }
 
-        if (sharedMem.Version < HWiNfoSensorsMinVersion)
+        for (var attempt = 0; ; attempt++)
         {
-          throw new InvalidDataException(
-            $"'{fileName}' has the unsupported shared memory version {sharedMem.Version}, " +
-            $"expected {HWiNfoSensorsMinVersion} or higher."
-          );
-        }
+          ValidateVersion(header, fileName);
+          if (section.TryRead(header, out var readings)) return readings;
 
-        return ReadSensorReadings(accessor, sharedMem);
+          if (attempt + 1 >= MaxReadAttempts)
+          {
+            throw new InvalidDataException(
+              $"'{fileName}' was updated by HWiNFO during each of {MaxReadAttempts} read attempts."
+            );
+          }
+
+          // HWiNFO is republishing the section. Retrying straight away tends to land in the same
+          // window: the update reports a smaller element count while it counts back up, so the retry
+          // reads less and finishes faster than the update it is racing. Backing off first - the
+          // window is tens of microseconds - lets it finish.
+          Thread.SpinWait(ReadRetrySpins << attempt);
+
+          if (!section.TryReadHeader(out header))
+          {
+            throw new InvalidDataException($"'{fileName}' does not contain a valid HWiNFO header.");
+          }
+        }
       }
       finally
       {
@@ -163,36 +183,43 @@ public class SharedMemoryReader : IDisposable
   }
 
   /// <summary>
-  /// Returns the cached view accessor for the given file, opening and caching it if necessary.
+  /// Returns the cached section for the given file, opening and caching it if necessary.
   /// </summary>
-  private MemoryMappedViewAccessor GetOrOpenAccessor(string fileName)
+  private MappedSection GetOrOpenSection(string fileName)
   {
-    if (_cache.TryGetValue(fileName, out var cached)) return cached.Accessor;
+    if (_cache.TryGetValue(fileName, out var cached)) return cached;
 
-    var mmf = MemoryMappedFile.OpenExisting(fileName, MemoryMappedFileRights.Read);
-    var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-    _cache[fileName] = (mmf, accessor);
-    return accessor;
+    var section = new MappedSection(fileName, _reuseUnchangedPolls);
+    _cache[fileName] = section;
+    return section;
   }
 
   /// <summary>
-  /// Removes the cached memory mapped file for the given file name and releases its handles.
+  /// Removes the cached section for the given file name and releases its handles.
   /// </summary>
   private void RemoveFromCache(string fileName)
   {
-    if (!_cache.Remove(fileName, out var cached)) return;
-
-    cached.Accessor.Dispose();
-    cached.Mmf.Dispose();
+    if (_cache.Remove(fileName, out var cached))
+    {
+      cached.Dispose();
+    }
   }
 
   /// <summary>
-  /// Reads the header and returns whether it carries a valid HWiNFO signature.
+  /// Validates the version of the shared memory header to ensure compatibility with the expected minimum version.
   /// </summary>
-  private static bool TryReadHeader(MemoryMappedViewAccessor accessor, out SmSensorsSharedMem2 sharedMem)
+  /// <exception cref="InvalidDataException">
+  /// Thrown when the shared memory version in the header is lower than the supported minimum version.
+  /// </exception>
+  private static void ValidateVersion(in SmSensorsSharedMem2 header, string fileName)
   {
-    accessor.Read(0, out sharedMem);
-    return sharedMem.Signature == HWiNfoSensorsSignature;
+    if (header.Version < HWiNfoSensorsMinVersion)
+    {
+      throw new InvalidDataException(
+        $"'{fileName}' has the unsupported shared memory version {header.Version}, " +
+        $"expected {HWiNfoSensorsMinVersion} or higher."
+      );
+    }
   }
 
   /// <summary>
@@ -244,105 +271,5 @@ public class SharedMemoryReader : IDisposable
     }
 
     return _mutex;
-  }
-
-  private static SensorReading[] ReadSensorReadings(MemoryMappedViewAccessor accessor, SmSensorsSharedMem2 sharedMem)
-  {
-    // Read sensor data and reading data
-    var sensors = ReadSensorData(accessor, sharedMem);
-    var readings = ReadReadingData(accessor, sharedMem);
-
-    // Convert to SensorReading 
-    return ConvertToSensorReading(readings, sensors);
-  }
-
-  private static SmSensorsSensorElement[] ReadSensorData(
-    MemoryMappedViewAccessor accessor,
-    SmSensorsSharedMem2 sharedMem
-  )
-  {
-    return ReadStructs<SmSensorsSensorElement>(
-      accessor,
-      sharedMem.SensorSection_Offset,
-      sharedMem.SensorSection_NumElements,
-      (int)sharedMem.SensorSection_SizeOfElement
-    );
-  }
-
-  private static SmSensorsReadingElement[] ReadReadingData(
-    MemoryMappedViewAccessor accessor,
-    SmSensorsSharedMem2 sharedMem
-  )
-  {
-    return ReadStructs<SmSensorsReadingElement>(
-      accessor,
-      sharedMem.ReadingSection_Offset,
-      sharedMem.ReadingElements_NumElements,
-      (int)sharedMem.ReadingSection_SizeOfElement
-    );
-  }
-
-  private static SensorReading[] ConvertToSensorReading(
-    SmSensorsReadingElement[] readings,
-    SmSensorsSensorElement[] sensors
-  )
-  {
-    var sensorReadings = new SensorReading[readings.Length];
-    for (var idx = 0; idx < readings.Length; idx++)
-    {
-      ref readonly var reading = ref readings[idx];
-      if (reading.SensorIndex >= (uint)sensors.Length)
-      {
-        throw new InvalidDataException(
-          $"Reading {idx} refers to sensor {reading.SensorIndex}, but only {sensors.Length} sensors were read."
-        );
-      }
-
-      ref readonly var sensor = ref sensors[(int)reading.SensorIndex];
-      sensorReadings[idx] = new SensorReading(
-        ReadingId: reading.ReadingId,
-        SensorIndex: reading.SensorIndex,
-        ReadingType: reading.Type,
-        LabelOrig: reading.LabelOrig,
-        LabelUser: reading.LabelUser,
-        Unit: reading.Unit,
-        Value: reading.Value,
-        ValueMin: reading.ValueMin,
-        ValueMax: reading.ValueMax,
-        ValueAvg: reading.ValueAvg,
-        SensorId: sensor.SensorId,
-        SensorInstance: sensor.SensorInst,
-        SensorNameOrig: sensor.NameOrig,
-        SensorNameUser: sensor.NameUser
-      );
-    }
-
-    return sensorReadings;
-  }
-
-  private static T[] ReadStructs<T>(MemoryMappedViewAccessor accessor, long offset, long numElements, int elementSize)
-    where T : struct
-  {
-    var results = new T[numElements];
-    var byteBuffer = new byte[elementSize];
-    var handle = GCHandle.Alloc(byteBuffer, GCHandleType.Pinned);
-    try
-    {
-      var ptr = handle.AddrOfPinnedObject();
-      for (var idx = 0; idx < numElements; idx++)
-      {
-        accessor.ReadArray(offset + (idx * (long)elementSize), byteBuffer, 0, elementSize);
-        results[idx] = (T)(
-          Marshal.PtrToStructure(ptr, typeof(T))
-          ?? throw new InvalidDataException("Failed to convert bytes to struct.")
-        );
-      }
-    }
-    finally
-    {
-      handle.Free();
-    }
-
-    return results;
   }
 }

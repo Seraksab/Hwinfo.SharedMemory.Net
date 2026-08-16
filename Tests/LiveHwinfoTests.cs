@@ -13,7 +13,7 @@ public class LiveHwinfoTests
   [Fact]
   public void ReadLocal_ShouldReturnSensorValues()
   {
-    var sensorValues = _reader.ReadLocal().ToList();
+    var sensorValues = _reader.ReadLocal();
     Assert.NotNull(sensorValues);
     Assert.True(sensorValues.Count > 0);
   }
@@ -21,7 +21,7 @@ public class LiveHwinfoTests
   [Fact]
   public void ReadRemote_0_ShouldReturnSensorValues()
   {
-    var sensorValues = _reader.ReadRemote(0).ToList();
+    var sensorValues = _reader.ReadRemote(0);
     Assert.NotNull(sensorValues);
     Assert.True(sensorValues.Count > 0);
   }

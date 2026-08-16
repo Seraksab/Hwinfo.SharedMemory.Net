@@ -5,8 +5,10 @@ namespace Hwinfo.SharedMemory.Tests;
 /// </summary>
 public class SnapshotTests
 {
-  private const int SnapshotSensorCount = 25;
   private const int SnapshotReadingCount = 470;
+
+  // One of the snapshot's 25 sensors ("ASUS EC") has no readings of its own
+  private const int SnapshotSensorCount = 24;
 
   private readonly SharedMemoryReader _reader = new();
 
@@ -17,7 +19,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Equal(SnapshotReadingCount, readings.Length);
+    Assert.Equal(SnapshotReadingCount, readings.Count);
   }
 
   [Fact]
@@ -29,11 +31,159 @@ public class SnapshotTests
 
     Assert.All(readings, reading =>
     {
-      Assert.InRange(reading.SensorIndex, 0u, SnapshotSensorCount - 1u);
-      Assert.NotEmpty(reading.SensorNameOrig);
-      Assert.NotEmpty(reading.SensorNameUser);
+      Assert.NotNull(reading.Sensor);
+      Assert.NotEmpty(reading.Sensor.NameOrig);
+      Assert.NotEmpty(reading.Sensor.NameUser);
       Assert.NotEmpty(reading.LabelOrig);
     });
+    Assert.Equal(
+      SnapshotSensorCount,
+      readings.Select(reading => reading.Sensor).Distinct(ReferenceEqualityComparer.Instance).Count()
+    );
+  }
+
+  [Theory]
+  // Decoded independently from the snapshot's bytes, so the parser is checked against something
+  // other than itself
+  [InlineData(
+    0, SensorType.SensorTypeOther, 134217728u, "Virtual Memory Committed", "MB",
+    26649.0, 7170.0, 28151.0, 21411.165534280426, 4026532609u, 0u, "System: ASUS "
+  )]
+  [InlineData(
+    235, SensorType.SensorTypeTemp, 16777225u, "Temp9", "°C",
+    24.0, 24.0, 24.0, 24.0, 4144396688u, 0u, "ASUS TUF GAMING X670E-PLUS WIFI (Nuvoton NCT6799D)"
+  )]
+  [InlineData(
+    469, SensorType.SensorTypeOther, 134217728u, "Total Errors", "",
+    0.0, 0.0, 0.0, 0.0, 4026535584u, 0u, "Windows Hardware Errors (WHEA)"
+  )]
+  public void Read_ShouldDecodeEveryFieldOfAReading(
+    int index, SensorType readingType, uint readingId, string label, string unit,
+    double value, double valueMin, double valueMax, double valueAvg,
+    uint sensorId, uint sensorInstance, string sensorName
+  )
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var reading = _reader.ReadMemoryMappedFile(snapshot.FileName)[index];
+
+    Assert.Equal(readingType, reading.ReadingType);
+    Assert.Equal(readingId, reading.ReadingId);
+    Assert.Equal(label, reading.LabelOrig);
+    Assert.Equal(label, reading.LabelUser);
+    Assert.Equal(unit, reading.Unit);
+    Assert.Equal(value, reading.Value);
+    Assert.Equal(valueMin, reading.ValueMin);
+    Assert.Equal(valueMax, reading.ValueMax);
+    Assert.Equal(valueAvg, reading.ValueAvg);
+    Assert.Equal(sensorId, reading.Sensor.Id);
+    Assert.Equal(sensorInstance, reading.Sensor.Instance);
+    Assert.Equal(sensorName, reading.Sensor.NameOrig);
+    Assert.Equal(sensorName, reading.Sensor.NameUser);
+  }
+
+  [Fact]
+  public void Read_ShouldShareOneSensorInstanceAcrossItsReadings()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    // All readings of a sensor point at the same instance, and it survives the next read
+    var bySensor = readings.GroupBy(reading => reading.Sensor, ReferenceEqualityComparer.Instance).ToList();
+    Assert.All(bySensor, group => Assert.All(group, reading => Assert.Same(group.Key, reading.Sensor)));
+
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.All(second.Zip(readings), pair => Assert.Same(pair.Second.Sensor, pair.First.Sensor));
+  }
+
+  [Fact]
+  public void Read_ShouldReuseTheDecodedStringsOfUnchangedElements()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.All(second.Zip(first), pair =>
+    {
+      Assert.Same(pair.Second.LabelOrig, pair.First.LabelOrig);
+      Assert.Same(pair.Second.LabelUser, pair.First.LabelUser);
+      Assert.Same(pair.Second.Unit, pair.First.Unit);
+    });
+  }
+
+  [Fact]
+  public void Read_WithReuseUnchangedPolls_ShouldReturnTheSameResultWhilePollTimeIsUnchanged()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(reuseUnchangedPolls: true);
+
+    var first = reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Same(first, second);
+  }
+
+  [Fact]
+  public void Read_WithoutReuseUnchangedPolls_ShouldReadAgainForEveryCall()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.NotSame(first, second);
+    Assert.Equal(first, second);
+  }
+
+  [Fact]
+  public void Read_ShouldNotHandOutAMutableResult()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.IsNotType<SensorReading[]>(readings);
+  }
+
+  [Fact]
+  public void Read_WithOversizedElements_ShouldStillParseTheKnownFields()
+  {
+    // HWiNFO's live elements are larger than the layout the reader knows, which the snapshot covers
+    using var snapshot = SharedMemorySnapshot.Publish();
+    var sensorElementSize = SharedMemorySnapshot.ReadUInt32(
+      SharedMemorySnapshot.Bytes, SharedMemorySnapshot.SensorSectionSizeOfElementOffset
+    );
+    var readingElementSize = SharedMemorySnapshot.ReadUInt32(
+      SharedMemorySnapshot.Bytes, SharedMemorySnapshot.ReadingSectionSizeOfElementOffset
+    );
+    Assert.True(sensorElementSize > 264, $"expected the snapshot's sensor elements to exceed 264 bytes");
+    Assert.True(readingElementSize > 316, $"expected the snapshot's reading elements to exceed 316 bytes");
+
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(SnapshotReadingCount, readings.Count);
+  }
+
+  [Fact]
+  public void Read_WithSectionBeyondTheMapping_ShouldThrowInvalidData()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish(
+      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionOffsetOffset, uint.MaxValue - 16)
+    );
+
+    Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
+  }
+
+  [Fact]
+  public void Read_WithUndersizedElements_ShouldThrowInvalidData()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish(
+      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionSizeOfElementOffset, 8u)
+    );
+
+    Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
   }
 
   [Fact]
@@ -110,7 +260,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Equal(SnapshotReadingCount, readings.Length);
+    Assert.Equal(SnapshotReadingCount, readings.Count);
   }
 
   [Fact]
@@ -123,7 +273,7 @@ public class SnapshotTests
 
     var readings = reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Equal(SnapshotReadingCount, readings.Length);
+    Assert.Equal(SnapshotReadingCount, readings.Count);
   }
 
   [Fact]

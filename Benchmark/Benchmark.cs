@@ -8,7 +8,11 @@ namespace Hwinfo.SharedMemory.Benchmark;
 public class Benchmark
 {
   private readonly SharedMemoryReader _sharedMemoryReader = new();
+  private readonly SharedMemoryReader _reusingReader = new(reuseUnchangedPolls: true);
+
+  [Benchmark(Baseline = true)]
+  public IReadOnlyList<SensorReading> ReadSharedMemory() => _sharedMemoryReader.ReadLocal();
 
   [Benchmark]
-  public IList<SensorReading> ReadSharedMemory() => _sharedMemoryReader.ReadLocal().ToList();
+  public IReadOnlyList<SensorReading> ReadSharedMemoryReusingPolls() => _reusingReader.ReadLocal();
 }
