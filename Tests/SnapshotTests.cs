@@ -20,7 +20,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(SnapshotReadingCount, readings.Count);
+    Assert.Equal(SnapshotReadingCount, readings.Length);
   }
 
   [Fact]
@@ -121,7 +121,7 @@ public class SnapshotTests
 
     var result = _reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Equal(SnapshotSensorCount + 1, result.Sensors.Count);
+    Assert.Equal(SnapshotSensorCount + 1, result.Sensors.Length);
     Assert.All(result.Sensors, sensor => Assert.NotEmpty(sensor.NameOrig));
 
     // Every reading points at the very instance from the sensor list, and the one sensor without
@@ -137,16 +137,16 @@ public class SnapshotTests
   }
 
   [Fact]
-  public void Read_ShouldNotHandOutTheSensorArrayItReuses()
+  public void Read_ShouldHandOutTheSameSensorsWhileTheyAreUnchanged()
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
     var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
     var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.IsNotType<Sensor[]>(first.Sensors);
-    // Nothing changed, so the same copy is handed out again rather than a new one
-    Assert.Same(first.Sensors, second.Sensors);
+    // Nothing changed, so the same copy is handed out again rather than a new one.
+    // ImmutableArray's == compares the array behind it, so this is an identity check.
+    Assert.True(first.Sensors == second.Sensors);
   }
 
   [Fact]
@@ -181,7 +181,7 @@ public class SnapshotTests
     var first = reader.ReadMemoryMappedFile(snapshot.FileName);
     var second = reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Same(first.Readings, second.Readings);
+    Assert.True(first.Readings == second.Readings);
     Assert.Equal(first.PollTime, second.PollTime);
   }
 
@@ -193,18 +193,9 @@ public class SnapshotTests
     var first = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
     var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.NotSame(first, second);
-    Assert.Equal(first, second);
-  }
-
-  [Fact]
-  public void Read_ShouldNotHandOutAMutableResult()
-  {
-    using var snapshot = SharedMemorySnapshot.Publish();
-
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
-
-    Assert.IsNotType<SensorReading[]>(readings);
+    // A fresh array every time, holding equal values
+    Assert.False(first == second);
+    Assert.Equal<SensorReading>(first, second);
   }
 
   [Fact]
@@ -223,7 +214,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(SnapshotReadingCount, readings.Count);
+    Assert.Equal(SnapshotReadingCount, readings.Length);
   }
 
   [Fact]
@@ -266,7 +257,7 @@ public class SnapshotTests
     var first = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
     var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(first, second);
+    Assert.Equal<SensorReading>(first, second);
   }
 
   [Fact]
@@ -334,7 +325,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(SnapshotReadingCount, readings.Count);
+    Assert.Equal(SnapshotReadingCount, readings.Length);
   }
 
   [Fact]
@@ -347,7 +338,7 @@ public class SnapshotTests
 
     var readings = reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(SnapshotReadingCount, readings.Count);
+    Assert.Equal(SnapshotReadingCount, readings.Length);
   }
 
   [Fact]
@@ -388,7 +379,7 @@ public class SnapshotTests
 
     var readings = reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
-    Assert.Equal(SnapshotReadingCount, readings.Count);
+    Assert.Equal(SnapshotReadingCount, readings.Length);
   }
 
   [Fact]

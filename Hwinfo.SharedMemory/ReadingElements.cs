@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Collections.Immutable;
 
 namespace Hwinfo.SharedMemory;
 
@@ -17,8 +17,8 @@ namespace Hwinfo.SharedMemory;
 /// </param>
 public readonly record struct SensorReadings(
   DateTimeOffset PollTime,
-  IReadOnlyList<SensorReading> Readings,
-  IReadOnlyList<Sensor> Sensors
+  ImmutableArray<SensorReading> Readings,
+  ImmutableArray<Sensor> Sensors
 );
 
 /// <summary>

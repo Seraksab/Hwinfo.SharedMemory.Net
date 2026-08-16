@@ -14,9 +14,8 @@ public class LiveHwinfoTests
   public void ReadLocal_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadLocal();
-    Assert.NotNull(sensorValues.Readings);
-    Assert.True(sensorValues.Readings.Count > 0);
-    Assert.True(sensorValues.Sensors.Count > 0);
+    Assert.True(sensorValues.Readings.Length > 0);
+    Assert.True(sensorValues.Sensors.Length > 0);
     Assert.NotEqual(default, sensorValues.PollTime);
   }
 
@@ -24,8 +23,7 @@ public class LiveHwinfoTests
   public void ReadRemote_0_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadRemote(0);
-    Assert.NotNull(sensorValues.Readings);
-    Assert.True(sensorValues.Readings.Count > 0);
+    Assert.True(sensorValues.Readings.Length > 0);
   }
 
   [Fact]

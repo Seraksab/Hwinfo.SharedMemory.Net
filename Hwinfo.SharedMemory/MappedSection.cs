@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections.ObjectModel;
+using System.Collections.Immutable;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
@@ -46,11 +46,11 @@ internal sealed class MappedSection : IDisposable
   private bool _decodedStringsValid;
 
   private long _lastPollTime = -1;
-  private ReadOnlyCollection<SensorReading>? _lastReadings;
+  private ImmutableArray<SensorReading> _lastReadings;
 
   // The sensors as they are handed out: a copy of _sensors, taken whenever one of them changed, so
   // that a result already given to a caller never changes underneath them
-  private ReadOnlyCollection<Sensor>? _sensorsView;
+  private ImmutableArray<Sensor> _sensorsView;
 
   // "HWiS" in little-endian byte order.
   // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
@@ -125,13 +125,13 @@ internal sealed class MappedSection : IDisposable
     // Nothing in the section has changed since the last read, so neither has its result. The result
     // is handed out as an immutable collection, so the same instance can be shared by every caller.
     if (_reuseUnchangedPolls
-        && _lastReadings is { } cached
-        && _sensorsView is { } cachedSensors
+        && !_lastReadings.IsDefault
+        && !_sensorsView.IsDefault
         && _lastPollTime == header.PollTime
         && _sensorCount == sensorCount
         && _readingCount == readingCount)
     {
-      readings = new SensorReadings(pollTime, cached, cachedSensors);
+      readings = new SensorReadings(pollTime, _lastReadings, _sensorsView);
       return true;
     }
 
@@ -154,8 +154,8 @@ internal sealed class MappedSection : IDisposable
       return false;
     }
 
-    // Parse fills _sensorsView along with the readings, so it is never null once it returns
-    readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount), _sensorsView!);
+    // Parse fills _sensorsView along with the readings, so it is never default once it returns
+    readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount), _sensorsView);
     _lastPollTime = header.PollTime;
     return true;
   }
@@ -217,8 +217,8 @@ internal sealed class MappedSection : IDisposable
     _sensorCount = sensorCount;
     _readingCount = readingCount;
     _decodedStringsValid = false;
-    _lastReadings = null;
-    _sensorsView = null;
+    _lastReadings = default;
+    _sensorsView = default;
     _lastPollTime = -1;
   }
 
@@ -249,7 +249,7 @@ internal sealed class MappedSection : IDisposable
   /// Parses both copied sections and joins every reading to its sensor.
   /// </summary>
   /// <exception cref="InvalidDataException">A reading refers to a sensor that was not read.</exception>
-  private ReadOnlyCollection<SensorReading> Parse(int sensorCount, int readingCount)
+  private ImmutableArray<SensorReading> Parse(int sensorCount, int readingCount)
   {
     // Everything cached describes the previous copy, so it may only be reused where the incoming copy
     // matches it. Clearing the flag up front means a parse that throws half way through leaves nothing
@@ -332,12 +332,16 @@ internal sealed class MappedSection : IDisposable
     // A copy, because _sensors keeps being reused: handing out the array itself would let a later
     // read change a result a caller is still holding. It is only taken when a sensor actually
     // changed, which after the first read practically never happens.
-    if (sensorsChanged || _sensorsView is null)
+    // The Clone() is load-bearing: AsImmutableArray wraps the array it is given rather than copying
+    // it, so dropping it would publish the live _sensors under an immutable facade.
+    if (sensorsChanged || _sensorsView.IsDefault)
     {
-      _sensorsView = new ReadOnlyCollection<Sensor>((Sensor[])_sensors.Clone());
+      _sensorsView = ImmutableCollectionsMarshal.AsImmutableArray((Sensor[])_sensors.Clone());
     }
 
-    var result = new ReadOnlyCollection<SensorReading>(readings);
+    // Wrapping rather than copying is safe here: 'readings' was allocated by this call, is never
+    // written again, and nothing else holds a reference to it.
+    var result = ImmutableCollectionsMarshal.AsImmutableArray(readings);
     // Only kept when it can actually be handed out again, so the last result isn't held alive for
     // readers that reparse every time anyway
     if (_reuseUnchangedPolls) _lastReadings = result;

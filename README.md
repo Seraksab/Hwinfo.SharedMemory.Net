@@ -106,8 +106,8 @@ hasn't moved and the previous result is handed out:
 
 | Method                       |         Mean | Ratio | Allocated |
 |------------------------------|-------------:|------:|----------:|
-| ReadSharedMemory             | 38,178.99 ns | 1.000 |   33888 B |
-| ReadSharedMemoryReusingPolls |     61.97 ns | 0.002 |         - |
+| ReadSharedMemory             | 36,801.16 ns | 1.000 |   33864 B |
+| ReadSharedMemoryReusingPolls |     55.70 ns | 0.002 |         - |
 
 Run on:
 
