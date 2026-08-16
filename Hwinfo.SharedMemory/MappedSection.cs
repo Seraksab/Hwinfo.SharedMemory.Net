@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
@@ -54,6 +52,10 @@ internal sealed class MappedSection : IDisposable
   // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
   private const uint HWiNfoSensorsSignature = 0x53695748;
 
+  // The range DateTimeOffset.FromUnixTimeSeconds accepts, i.e. the years 0001 to 9999
+  private const long MinUnixSeconds = -62135596800;
+  private const long MaxUnixSeconds = 253402300799;
+
   /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception>
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   internal MappedSection(string fileName, bool reuseUnchangedPolls)
@@ -98,8 +100,9 @@ internal sealed class MappedSection : IDisposable
   /// parsed and the caller should read the header again and retry.
   /// </returns>
   /// <exception cref="InvalidDataException">The header describes a section that cannot be parsed.</exception>
-  internal bool TryRead(in SmSensorsSharedMem2 header, [NotNullWhen(true)] out IReadOnlyList<SensorReading>? readings)
+  internal bool TryRead(in SmSensorsSharedMem2 header, out SensorReadings readings)
   {
+    var pollTime = ToPollTime(header.PollTime);
     var sensorCount = ValidateSection(
       header.SensorSection_Offset,
       header.SensorSection_SizeOfElement,
@@ -123,7 +126,7 @@ internal sealed class MappedSection : IDisposable
         && _sensorCount == sensorCount
         && _readingCount == readingCount)
     {
-      readings = cached;
+      readings = new SensorReadings(pollTime, cached);
       return true;
     }
 
@@ -142,11 +145,11 @@ internal sealed class MappedSection : IDisposable
     // window and copy a truncated or mixed set, so the header has to still describe what was copied.
     if (!TryReadHeader(out var afterRead) || !header.Describes(afterRead))
     {
-      readings = null;
+      readings = default;
       return false;
     }
 
-    readings = Parse(sensorCount, readingCount);
+    readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount));
     _lastPollTime = header.PollTime;
     return true;
   }
@@ -322,6 +325,20 @@ internal sealed class MappedSection : IDisposable
     // readers that reparse every time anyway
     if (_reuseUnchangedPolls) _lastReadings = result;
     return result;
+  }
+
+  /// <summary>
+  /// Converts the header's poll time, a unix time in seconds, to a <see cref="DateTimeOffset"/>.
+  /// </summary>
+  /// <exception cref="InvalidDataException">The poll time is not a representable point in time.</exception>
+  private DateTimeOffset ToPollTime(long pollTime)
+  {
+    if (pollTime < MinUnixSeconds || pollTime > MaxUnixSeconds)
+    {
+      throw new InvalidDataException($"'{_fileName}' reports the poll time {pollTime}, which is not a valid date.");
+    }
+
+    return DateTimeOffset.FromUnixTimeSeconds(pollTime);
   }
 
   /// <summary>

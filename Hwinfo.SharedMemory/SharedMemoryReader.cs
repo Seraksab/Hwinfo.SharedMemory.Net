@@ -58,13 +58,13 @@ public class SharedMemoryReader : IDisposable
   /// <summary>
   /// Reads the sensor values of the local HWiNFO instance
   /// </summary>
-  /// <returns>The sensor values</returns>
+  /// <returns>The sensor values and the time HWiNFO last polled them</returns>
   /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception>
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
-  public IReadOnlyList<SensorReading> ReadLocal()
+  public SensorReadings ReadLocal()
   {
     return ReadMemoryMappedFile(HWiNfoSensorsMapFileNameLocal);
   }
@@ -73,14 +73,14 @@ public class SharedMemoryReader : IDisposable
   /// Reads the sensor values of the remote HWiNFO instance with the given connection index
   /// </summary>
   /// <param name="index">The connection index starting with 0></param>
-  /// <returns>The sensor values</returns>
+  /// <returns>The sensor values and the time HWiNFO last polled them</returns>
   /// <exception cref="ArgumentOutOfRangeException">The index is negative.</exception>
   /// <exception cref="FileNotFoundException">The shared memory file does not exist.</exception>
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
-  public IReadOnlyList<SensorReading> ReadRemote(int index = 0)
+  public SensorReadings ReadRemote(int index = 0)
   {
     if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Must be greater than or equal to 0");
     return ReadMemoryMappedFile($"{HWiNfoSensorsMapFileNameRemote}{index}");
@@ -112,7 +112,7 @@ public class SharedMemoryReader : IDisposable
   /// Reads the sensor values from the memory mapped file with the given name.
   /// Internal so tests can read from a snapshot instead of a live HWiNFO instance.
   /// </summary>
-  internal IReadOnlyList<SensorReading> ReadMemoryMappedFile(string fileName)
+  internal SensorReadings ReadMemoryMappedFile(string fileName)
   {
     // The cross-process mutex may be unavailable, so callers within this process are serialized
     // separately to keep the cache and the reads consistent
@@ -225,9 +225,10 @@ public class SharedMemoryReader : IDisposable
   {
     if (_stalenessTimeout <= TimeSpan.Zero) return false;
 
-    // PollTime is the unix time in seconds of the last update
-    var ageInSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - sharedMem.PollTime;
-    return TimeSpan.FromSeconds(ageInSeconds) > _stalenessTimeout;
+    // PollTime is the unix time in seconds of the last update. The subtraction is done in double
+    // because a garbage poll time can be any long, which would overflow both long and TimeSpan.
+    var ageInSeconds = (double)DateTimeOffset.UtcNow.ToUnixTimeSeconds() - sharedMem.PollTime;
+    return ageInSeconds > _stalenessTimeout.TotalSeconds;
   }
 
   /// <summary>

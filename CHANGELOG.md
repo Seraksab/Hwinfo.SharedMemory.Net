@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HWiNFO mutex is now treated as advisory: it's opened lazily, requesting only synchronization
   rights, and reads proceed without it if it's unavailable. Previously the constructor requested full
   access and threw `UnauthorizedAccessException` in any non-elevated process while HWiNFO was running.
-- `ReadLocal` and `ReadRemote` return `IReadOnlyList<SensorReading>` instead of `IEnumerable<SensorReading>`,
-  so callers no longer need a `ToList()` to get a count or an indexer.
+- `ReadLocal` and `ReadRemote` return a `SensorReadings`, which pairs the `IReadOnlyList<SensorReading>`
+  with the `PollTime` at which HWiNFO produced them.
 - The sensor a reading belongs to moved out of `SensorReading` into a `Sensor` record. One `Sensor`
   instance is now shared by all of its readings rather than being copied.
 - Reads are now about 2.7x faster and allocate about 7x less: the benchmark of 470 readings went from

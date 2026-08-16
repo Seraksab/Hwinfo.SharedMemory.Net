@@ -1,4 +1,20 @@
-﻿namespace Hwinfo.SharedMemory;
+﻿using System;
+using System.Collections.Generic;
+
+namespace Hwinfo.SharedMemory;
+
+/// <summary>
+/// The result of one read: the readings HWiNFO published, and when it published them.
+/// </summary>
+/// <param name="PollTime">
+/// When HWiNFO last polled its sensors. HWiNFO reports this in whole seconds, so it only changes
+/// once a second even if it polls more often.
+/// </param>
+/// <param name="Readings">The sensor readings of that poll.</param>
+public readonly record struct SensorReadings(
+  DateTimeOffset PollTime,
+  IReadOnlyList<SensorReading> Readings
+);
 
 /// <summary>
 /// A single sensor reading.

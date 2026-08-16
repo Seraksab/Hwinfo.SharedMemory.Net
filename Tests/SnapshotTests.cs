@@ -17,7 +17,7 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SnapshotReadingCount, readings.Count);
   }
@@ -27,7 +27,7 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.All(readings, reading =>
     {
@@ -65,7 +65,7 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var reading = _reader.ReadMemoryMappedFile(snapshot.FileName)[index];
+    var reading = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings[index];
 
     Assert.Equal(readingType, reading.ReadingType);
     Assert.Equal(readingId, reading.ReadingId);
@@ -87,13 +87,13 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     // All readings of a sensor point at the same instance, and it survives the next read
     var bySensor = readings.GroupBy(reading => reading.Sensor, ReferenceEqualityComparer.Instance).ToList();
     Assert.All(bySensor, group => Assert.All(group, reading => Assert.Same(group.Key, reading.Sensor)));
 
-    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
     Assert.All(second.Zip(readings), pair => Assert.Same(pair.Second.Sensor, pair.First.Sensor));
   }
 
@@ -102,8 +102,8 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
-    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.All(second.Zip(first), pair =>
     {
@@ -111,6 +111,29 @@ public class SnapshotTests
       Assert.Same(pair.Second.LabelUser, pair.First.LabelUser);
       Assert.Same(pair.Second.Unit, pair.First.Unit);
     });
+  }
+
+  [Fact]
+  public void Read_ShouldReportThePollTimeOfTheSection()
+  {
+    // The snapshot is published with its poll time set to now, in whole seconds
+    var published = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var pollTime = _reader.ReadMemoryMappedFile(snapshot.FileName).PollTime;
+
+    Assert.InRange(pollTime, published, published.AddSeconds(5));
+    Assert.Equal(TimeSpan.Zero, pollTime.Offset);
+  }
+
+  [Fact]
+  public void Read_WithUnrepresentablePollTime_ShouldThrowInvalidData()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, long.MaxValue)
+    );
+
+    Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
   }
 
   [Fact]
@@ -122,7 +145,8 @@ public class SnapshotTests
     var first = reader.ReadMemoryMappedFile(snapshot.FileName);
     var second = reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    Assert.Same(first, second);
+    Assert.Same(first.Readings, second.Readings);
+    Assert.Equal(first.PollTime, second.PollTime);
   }
 
   [Fact]
@@ -130,8 +154,8 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
-    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.NotSame(first, second);
     Assert.Equal(first, second);
@@ -142,7 +166,7 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.IsNotType<SensorReading[]>(readings);
   }
@@ -161,7 +185,7 @@ public class SnapshotTests
     Assert.True(sensorElementSize > 264, $"expected the snapshot's sensor elements to exceed 264 bytes");
     Assert.True(readingElementSize > 316, $"expected the snapshot's reading elements to exceed 316 bytes");
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SnapshotReadingCount, readings.Count);
   }
@@ -169,8 +193,8 @@ public class SnapshotTests
   [Fact]
   public void Read_WithSectionBeyondTheMapping_ShouldThrowInvalidData()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionOffsetOffset, uint.MaxValue - 16)
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionOffsetOffset, uint.MaxValue - 16)
     );
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
@@ -179,8 +203,8 @@ public class SnapshotTests
   [Fact]
   public void Read_WithUndersizedElements_ShouldThrowInvalidData()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionSizeOfElementOffset, 8u)
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.ReadingSectionSizeOfElementOffset, 8u)
     );
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
@@ -191,7 +215,7 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     var temperatures = readings.Where(reading => reading.ReadingType == SensorType.Temp).ToList();
     Assert.NotEmpty(temperatures);
@@ -203,8 +227,8 @@ public class SnapshotTests
   {
     using var snapshot = SharedMemorySnapshot.Publish();
 
-    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
-    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(first, second);
   }
@@ -212,8 +236,8 @@ public class SnapshotTests
   [Fact]
   public void Read_WithInvalidSignature_ShouldThrowInvalidData()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SignatureOffset, 0xDEADBEEF)
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SignatureOffset, 0xDEADBEEF)
     );
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
@@ -222,9 +246,9 @@ public class SnapshotTests
   [Fact]
   public void Read_WithUnsupportedVersion_ShouldThrowInvalidData()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.VersionOffset, 1u)
-    );
+    using var snapshot =
+      SharedMemorySnapshot.Publish(data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.VersionOffset, 1u)
+      );
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
   }
@@ -250,7 +274,7 @@ public class SnapshotTests
       SharedMemorySnapshot.Write(data, readingOffset + SharedMemorySnapshot.ReadingTypeOffset, 42u);
     });
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SensorType.Other, readings[0].ReadingType);
   }
@@ -258,8 +282,8 @@ public class SnapshotTests
   [Fact]
   public void Read_WithoutSensors_ShouldThrowInvalidData()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SensorSectionNumElementsOffset, 0u)
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SensorSectionNumElementsOffset, 0u)
     );
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
@@ -268,11 +292,11 @@ public class SnapshotTests
   [Fact]
   public void Read_WithStalePollTime_ShouldReopenAndStillReturnReadings()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, 0L)
-    );
+    using var snapshot =
+      SharedMemorySnapshot.Publish(data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, 0L)
+      );
 
-    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SnapshotReadingCount, readings.Count);
   }
@@ -280,12 +304,12 @@ public class SnapshotTests
   [Fact]
   public void Read_WithStalenessCheckDisabled_ShouldNotReopen()
   {
-    using var snapshot = SharedMemorySnapshot.Publish(
-      data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, 0L)
-    );
+    using var snapshot =
+      SharedMemorySnapshot.Publish(data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, 0L)
+      );
     using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { StalenessTimeout = TimeSpan.Zero });
 
-    var readings = reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SnapshotReadingCount, readings.Count);
   }
@@ -293,8 +317,8 @@ public class SnapshotTests
   [Fact]
   public void Read_UnknownFile_ShouldThrowFileNotFound()
   {
-    Assert.Throws<FileNotFoundException>(
-      () => _reader.ReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}")
+    Assert.Throws<FileNotFoundException>(() =>
+      _reader.ReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}")
     );
   }
 
@@ -326,7 +350,7 @@ public class SnapshotTests
       new SharedMemoryReaderOptions { MutexTimeout = Timeout.InfiniteTimeSpan }
     );
 
-    var readings = reader.ReadMemoryMappedFile(snapshot.FileName);
+    var readings = reader.ReadMemoryMappedFile(snapshot.FileName).Readings;
 
     Assert.Equal(SnapshotReadingCount, readings.Count);
   }

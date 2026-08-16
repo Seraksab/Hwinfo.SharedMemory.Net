@@ -14,16 +14,17 @@ public class LiveHwinfoTests
   public void ReadLocal_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadLocal();
-    Assert.NotNull(sensorValues);
-    Assert.True(sensorValues.Count > 0);
+    Assert.NotNull(sensorValues.Readings);
+    Assert.True(sensorValues.Readings.Count > 0);
+    Assert.NotEqual(default, sensorValues.PollTime);
   }
 
   [Fact]
   public void ReadRemote_0_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadRemote(0);
-    Assert.NotNull(sensorValues);
-    Assert.True(sensorValues.Count > 0);
+    Assert.NotNull(sensorValues.Readings);
+    Assert.True(sensorValues.Readings.Count > 0);
   }
 
   [Fact]
