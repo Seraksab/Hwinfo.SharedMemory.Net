@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   99.7 µs and 237 KB (which included the `ToList()` it needed) to 36.3 µs and 33 KB.
 - The `SensorType` members lost their `SensorType` prefix
 - A reading type HWiNFO reports that isn't one of the known nine is mapped to `SensorType.Other`
+- The constructor takes a single `SharedMemoryReaderOptions` instead of three optional parameters.
 
 ### Fixed
 

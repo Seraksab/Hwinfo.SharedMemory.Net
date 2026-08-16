@@ -117,7 +117,7 @@ public class SnapshotTests
   public void Read_WithReuseUnchangedPolls_ShouldReturnTheSameResultWhilePollTimeIsUnchanged()
   {
     using var snapshot = SharedMemorySnapshot.Publish();
-    using var reader = new SharedMemoryReader(reuseUnchangedPolls: true);
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { ReuseUnchangedPolls = true });
 
     var first = reader.ReadMemoryMappedFile(snapshot.FileName);
     var second = reader.ReadMemoryMappedFile(snapshot.FileName);
@@ -283,7 +283,7 @@ public class SnapshotTests
     using var snapshot = SharedMemorySnapshot.Publish(
       data => SharedMemorySnapshot.Write(data, SharedMemorySnapshot.PollTimeOffset, 0L)
     );
-    using var reader = new SharedMemoryReader(stalenessTimeout: 0);
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { StalenessTimeout = TimeSpan.Zero });
 
     var readings = reader.ReadMemoryMappedFile(snapshot.FileName);
 
@@ -302,6 +302,33 @@ public class SnapshotTests
   public void ReadRemote_WithNegativeIndex_ShouldThrowArgumentOutOfRange()
   {
     Assert.Throws<ArgumentOutOfRangeException>(() => _reader.ReadRemote(-1));
+  }
+
+  [Theory]
+  [InlineData(-1, 0)]
+  [InlineData(0, -1)]
+  public void Constructor_WithNegativeTimeout_ShouldThrowArgumentOutOfRange(int mutexSeconds, int stalenessSeconds)
+  {
+    var options = new SharedMemoryReaderOptions
+    {
+      MutexTimeout = TimeSpan.FromSeconds(mutexSeconds),
+      StalenessTimeout = TimeSpan.FromSeconds(stalenessSeconds)
+    };
+
+    Assert.Throws<ArgumentOutOfRangeException>(() => new SharedMemoryReader(options));
+  }
+
+  [Fact]
+  public void Constructor_WithInfiniteMutexTimeout_ShouldBeAccepted()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(
+      new SharedMemoryReaderOptions { MutexTimeout = Timeout.InfiniteTimeSpan }
+    );
+
+    var readings = reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(SnapshotReadingCount, readings.Count);
   }
 
   [Fact]

@@ -24,8 +24,8 @@ public class SharedMemoryReader : IDisposable
   private const int MaxReadAttempts = 5;
   private const int ReadRetrySpins = 1000;
 
-  private readonly int _mutexTimeout;
-  private readonly int _stalenessTimeout;
+  private readonly TimeSpan _mutexTimeout;
+  private readonly TimeSpan _stalenessTimeout;
   private readonly bool _reuseUnchangedPolls;
   private readonly Lock _lock = new();
   private readonly Dictionary<string, MappedSection> _cache = new();
@@ -41,23 +41,18 @@ public class SharedMemoryReader : IDisposable
   /// <summary>
   /// Creates a new SharedMemoryReader
   /// </summary>
-  /// <param name="mutexTimeout">The number of milliseconds to wait for the mutex, or Infinite (-1) to wait indefinitely</param>
-  /// <param name="stalenessTimeout">
-  /// The number of milliseconds after which a shared memory file that hasn't been updated by HWiNFO is
-  /// considered stale and is reopened, or 0 to never consider it stale. Should be well above the polling
-  /// period configured in HWiNFO.
+  /// <param name="options">
+  /// The settings to use, or <c>null</c> for the defaults of <see cref="SharedMemoryReaderOptions"/>
   /// </param>
-  /// <param name="reuseUnchangedPolls">
-  /// Whether to hand out the previous result instead of reading the shared memory again while HWiNFO's
-  /// poll time is unchanged, which makes reads that are more frequent than HWiNFO's polling period
-  /// almost free. HWiNFO reports its poll time in whole seconds, so with a polling period below one
-  /// second this can return values that are up to a second old.
-  /// </param>
-  public SharedMemoryReader(int mutexTimeout = 1000, int stalenessTimeout = 60000, bool reuseUnchangedPolls = false)
+  /// <exception cref="ArgumentOutOfRangeException">A timeout in the options is negative or too large.</exception>
+  public SharedMemoryReader(SharedMemoryReaderOptions? options = null)
   {
-    _mutexTimeout = mutexTimeout;
-    _stalenessTimeout = stalenessTimeout;
-    _reuseUnchangedPolls = reuseUnchangedPolls;
+    options ??= new SharedMemoryReaderOptions();
+    options.Validate();
+
+    _mutexTimeout = options.MutexTimeout;
+    _stalenessTimeout = options.StalenessTimeout;
+    _reuseUnchangedPolls = options.ReuseUnchangedPolls;
   }
 
   /// <summary>
@@ -130,7 +125,7 @@ public class SharedMemoryReader : IDisposable
       if (mutex != null && !mutexAcquired)
       {
         throw new TimeoutException(
-          $"Timed out after {_mutexTimeout} ms waiting for the mutex '{HWiNfoSensorsSm2Mutex}'."
+          $"Timed out after {_mutexTimeout} waiting for the mutex '{HWiNfoSensorsSm2Mutex}'."
         );
       }
 
@@ -151,7 +146,7 @@ public class SharedMemoryReader : IDisposable
           }
         }
 
-        for (var attempt = 0; ; attempt++)
+        for (var attempt = 0;; attempt++)
         {
           ValidateVersion(header, fileName);
           if (section.TryRead(header, out var readings)) return readings;
@@ -228,11 +223,11 @@ public class SharedMemoryReader : IDisposable
   /// </summary>
   private bool IsStale(SmSensorsSharedMem2 sharedMem)
   {
-    if (_stalenessTimeout <= 0) return false;
+    if (_stalenessTimeout <= TimeSpan.Zero) return false;
 
     // PollTime is the unix time in seconds of the last update
     var ageInSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - sharedMem.PollTime;
-    return ageInSeconds * 1000d > _stalenessTimeout;
+    return TimeSpan.FromSeconds(ageInSeconds) > _stalenessTimeout;
   }
 
   /// <summary>
