@@ -15,7 +15,6 @@
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageId>Hwinfo.SharedMemory.Net</PackageId>
-        <InvariantGlobalization>true</InvariantGlobalization>
         <RepositoryUrl>https://github.com/Seraksab/Hwinfo.SharedMemory.Net</RepositoryUrl>
         <PackageTags>Hwinfo,HWiNFO64</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
