@@ -1,5 +1,4 @@
-﻿using Microsoft.Win32.SafeHandles;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
@@ -7,6 +6,7 @@ using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace Hwinfo.SharedMemory;
 
@@ -298,7 +298,7 @@ internal sealed class MappedSection : IDisposable
 
       readings[idx] = new SensorReading(
         ReadingId: MemoryMarshal.Read<uint>(element[SmLayout.ReadingId..]),
-        ReadingType: (SensorType)MemoryMarshal.Read<uint>(element[SmLayout.ReadingType..]),
+        ReadingType: ToSensorType(MemoryMarshal.Read<uint>(element[..])),
         LabelOrig: _labelsOrig[idx],
         LabelUser: _labelsUser[idx],
         Unit: _units[idx],
@@ -322,6 +322,16 @@ internal sealed class MappedSection : IDisposable
     // readers that reparse every time anyway
     if (_reuseUnchangedPolls) _lastReadings = result;
     return result;
+  }
+
+  /// <summary>
+  /// Maps the raw reading type to <see cref="SensorType"/>.
+  /// The field is four bytes of shared memory that could hold anything, so a type this library doesn't know
+  /// becomes <see cref="SensorType.Other"/>.
+  /// </summary>
+  private static SensorType ToSensorType(uint type)
+  {
+    return type <= (uint)SensorType.Other ? (SensorType)type : SensorType.Other;
   }
 
   /// <summary>

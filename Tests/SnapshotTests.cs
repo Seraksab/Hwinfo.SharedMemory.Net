@@ -46,15 +46,15 @@ public class SnapshotTests
   // Decoded independently from the snapshot's bytes, so the parser is checked against something
   // other than itself
   [InlineData(
-    0, SensorType.SensorTypeOther, 134217728u, "Virtual Memory Committed", "MB",
+    0, SensorType.Other, 134217728u, "Virtual Memory Committed", "MB",
     26649.0, 7170.0, 28151.0, 21411.165534280426, 4026532609u, 0u, "System: ASUS "
   )]
   [InlineData(
-    235, SensorType.SensorTypeTemp, 16777225u, "Temp9", "°C",
+    235, SensorType.Temp, 16777225u, "Temp9", "°C",
     24.0, 24.0, 24.0, 24.0, 4144396688u, 0u, "ASUS TUF GAMING X670E-PLUS WIFI (Nuvoton NCT6799D)"
   )]
   [InlineData(
-    469, SensorType.SensorTypeOther, 134217728u, "Total Errors", "",
+    469, SensorType.Other, 134217728u, "Total Errors", "",
     0.0, 0.0, 0.0, 0.0, 4026535584u, 0u, "Windows Hardware Errors (WHEA)"
   )]
   public void Read_ShouldDecodeEveryFieldOfAReading(
@@ -193,7 +193,7 @@ public class SnapshotTests
 
     var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
 
-    var temperatures = readings.Where(reading => reading.ReadingType == SensorType.SensorTypeTemp).ToList();
+    var temperatures = readings.Where(reading => reading.ReadingType == SensorType.Temp).ToList();
     Assert.NotEmpty(temperatures);
     Assert.All(temperatures, reading => Assert.Equal("°C", reading.Unit));
   }
@@ -239,6 +239,20 @@ public class SnapshotTests
     });
 
     Assert.Throws<InvalidDataException>(() => _reader.ReadMemoryMappedFile(snapshot.FileName));
+  }
+
+  [Fact]
+  public void Read_WithUnknownReadingType_ShouldReportOther()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+    {
+      var readingOffset = (int)SharedMemorySnapshot.ReadUInt32(data, SharedMemorySnapshot.ReadingSectionOffsetOffset);
+      SharedMemorySnapshot.Write(data, readingOffset + SharedMemorySnapshot.ReadingTypeOffset, 42u);
+    });
+
+    var readings = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(SensorType.Other, readings[0].ReadingType);
   }
 
   [Fact]

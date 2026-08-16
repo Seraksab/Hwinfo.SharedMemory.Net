@@ -17,7 +17,8 @@ internal sealed class SharedMemorySnapshot : IDisposable
   internal const int ReadingSectionOffsetOffset = 32;
   internal const int ReadingSectionSizeOfElementOffset = 36;
 
-  // Offset of SensorIndex within a reading element
+  // Offsets within a reading element
+  internal const int ReadingTypeOffset = 0;
   internal const int ReadingSensorIndexOffset = 4;
 
   private static readonly byte[] Snapshot =

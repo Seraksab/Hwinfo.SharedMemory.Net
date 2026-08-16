@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instance is now shared by all of its readings rather than being copied.
 - Reads are now about 2.7x faster and allocate about 7x less: the benchmark of 470 readings went from
   99.7 µs and 237 KB (which included the `ToList()` it needed) to 36.3 µs and 33 KB.
+- The `SensorType` members lost their `SensorType` prefix
+- A reading type HWiNFO reports that isn't one of the known nine is mapped to `SensorType.Other`
 
 ### Fixed
 
