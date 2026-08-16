@@ -3,7 +3,7 @@ namespace Hwinfo.SharedMemory.Tests;
 /// <summary>
 /// Tests that read from a snapshot of the HWiNFO shared memory and therefore run without HWiNFO.
 /// </summary>
-public class SnapshotTests
+public class SnapshotTests : IDisposable
 {
   private const int SnapshotReadingCount = 470;
 
@@ -12,6 +12,10 @@ public class SnapshotTests
   private const int SnapshotSensorCount = 24;
 
   private readonly SharedMemoryReader _reader = new();
+
+  // Without this the reader keeps the snapshot's section mapped after the snapshot itself is
+  // disposed, so it outlives the test that published it
+  public void Dispose() => _reader.Dispose();
 
   [Fact]
   public void Read_ShouldReturnAllReadings()
@@ -347,6 +351,15 @@ public class SnapshotTests
     Assert.Throws<FileNotFoundException>(() =>
       _reader.ReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}")
     );
+  }
+
+  [Fact]
+  public void ReadRemote_WithAnIndexThatIsNotConnected_ShouldThrowFileNotFound()
+  {
+    // Covers how ReadRemote builds the section name. No HWiNFO needed: an index this high has no
+    // section either way, which is also why it doesn't assume anything about the machine's
+    // connections the way asserting on index 1 would
+    Assert.Throws<FileNotFoundException>(() => _reader.ReadRemote(999));
   }
 
   [Fact]

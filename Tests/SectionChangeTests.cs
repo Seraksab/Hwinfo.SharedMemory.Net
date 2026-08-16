@@ -1,0 +1,152 @@
+namespace Hwinfo.SharedMemory.Tests;
+
+/// <summary>
+/// Tests that change a published section between two reads of the same reader.
+/// <para>
+/// A reader caches one mapped section per file name, and most of its state - the byte buffers, the
+/// decoded strings, the sensor instances, the reused result - only exists on that cached section.
+/// Publishing a second snapshot would get a fresh name and therefore a fresh section, so none of
+/// those paths would run. Patching the published section is what makes them reachable.
+/// </para>
+/// </summary>
+public class SectionChangeTests : IDisposable
+{
+  private static readonly int FullReadingCount = (int)SharedMemorySnapshot.ReadingCount;
+
+  private readonly SharedMemoryReader _reader = new();
+
+  public void Dispose() => _reader.Dispose();
+
+  [Fact]
+  public void Read_WhenTheReadingCountChanges_ShouldReturnTheNewShape()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.Equal(FullReadingCount, first.Readings.Length);
+
+    snapshot.PatchReadingCount(100);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(100, second.Readings.Length);
+    Assert.Equal(first.Readings[0].LabelOrig, second.Readings[0].LabelOrig);
+    // The buffers and the string caches were sized for the old shape, so they were dropped and
+    // everything was decoded again rather than reused from a stale slot
+    Assert.NotSame(first.Readings[0].LabelOrig, second.Readings[0].LabelOrig);
+  }
+
+  [Fact]
+  public void Read_WhenTheReadingCountChangesBack_ShouldReturnTheOriginalReadingsAgain()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    snapshot.PatchReadingCount(100);
+    _reader.ReadMemoryMappedFile(snapshot.FileName);
+    snapshot.PatchReadingCount((uint)FullReadingCount);
+    var third = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(FullReadingCount, third.Readings.Length);
+    Assert.Equal<SensorReading>(first.Readings, third.Readings);
+  }
+
+  [Fact]
+  public void Read_WhenTheReadingCountDropsToZero_ShouldReturnNoReadingsButEverySensor()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    _reader.ReadMemoryMappedFile(snapshot.FileName);
+    snapshot.PatchReadingCount(0);
+    var result = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Empty(result.Readings);
+    Assert.Equal((int)SharedMemorySnapshot.SensorCount, result.Sensors.Length);
+  }
+
+  [Fact]
+  public void Read_WhenASensorChanges_ShouldReplaceOnlyThatSensor()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var originalName = first.Sensors[0].NameOrig;
+
+    snapshot.PatchSensorName(0, "Renamed Sensor");
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal("Renamed Sensor", second.Sensors[0].NameOrig);
+    Assert.NotEqual(originalName, second.Sensors[0].NameOrig);
+
+    // Every sensor whose bytes didn't move is still the very instance of the previous read
+    Assert.Same(first.Sensors[1], second.Sensors[1]);
+  }
+
+  [Fact]
+  public void Read_WhenASensorChanges_ShouldNotChangeAResultTheCallerAlreadyHolds()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var originalName = first.Sensors[0].NameOrig;
+
+    snapshot.PatchSensorName(0, "Renamed Sensor");
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    // The reader reuses one sensor array slot by slot, so the list it hands out has to be a copy.
+    // Without it the rename would reach back into the result the first read produced.
+    Assert.Equal(originalName, first.Sensors[0].NameOrig);
+    Assert.False(first.Sensors == second.Sensors);
+  }
+
+  [Fact]
+  public void Read_WhenTheSectionGoesStale_ShouldReopenItAndDropItsCaches()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    // Same section throughout, so the decoded strings are handed out again rather than decoded again
+    Assert.Same(first.Readings[0].LabelOrig, second.Readings[0].LabelOrig);
+
+    // A poll time from 1970 makes the section look like an orphan HWiNFO no longer updates, so it is
+    // released and reopened - which throws away every string decoded from it along with the mapping
+    snapshot.PatchPollTime(0);
+    var third = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(FullReadingCount, third.Readings.Length);
+    Assert.Equal(second.Readings[0].LabelOrig, third.Readings[0].LabelOrig);
+    Assert.NotSame(second.Readings[0].LabelOrig, third.Readings[0].LabelOrig);
+  }
+
+  [Fact]
+  public void Read_WithStalenessCheckDisabled_ShouldKeepUsingTheCachedSection()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { StalenessTimeout = TimeSpan.Zero });
+
+    var first = reader.ReadMemoryMappedFile(snapshot.FileName);
+    snapshot.PatchPollTime(0);
+    var second = reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    // Nothing was reopened, so the strings survive
+    Assert.Same(first.Readings[0].LabelOrig, second.Readings[0].LabelOrig);
+  }
+
+  [Fact]
+  public void Read_WithReuseUnchangedPolls_ShouldReadAgainOnceThePollTimeMoves()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { ReuseUnchangedPolls = true });
+
+    var first = reader.ReadMemoryMappedFile(snapshot.FileName);
+    var second = reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.True(first.Readings == second.Readings);
+
+    snapshot.PatchPollTime(first.PollTime.ToUnixTimeSeconds() + 1);
+    var third = reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.False(second.Readings == third.Readings);
+    Assert.Equal(first.PollTime.AddSeconds(1), third.PollTime);
+    Assert.Equal<SensorReading>(first.Readings, third.Readings);
+  }
+}

@@ -6,9 +6,11 @@ namespace Hwinfo.SharedMemory.Tests;
 /// Exclude them with <c>dotnet test --filter "Category!=RequiresHwinfo"</c>.
 /// </summary>
 [Trait("Category", "RequiresHwinfo")]
-public class LiveHwinfoTests
+public class LiveHwinfoTests : IDisposable
 {
   private readonly SharedMemoryReader _reader = new();
+
+  public void Dispose() => _reader.Dispose();
 
   [Fact]
   public void ReadLocal_ShouldReturnSensorValues()
