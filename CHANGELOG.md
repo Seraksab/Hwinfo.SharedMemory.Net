@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `SensorType` members lost their `SensorType` prefix
 - A reading type HWiNFO reports that isn't one of the known nine is mapped to `SensorType.Other`
 - The constructor takes a single `SharedMemoryReaderOptions` instead of three optional parameters.
+- `SharedMemoryReader` is `sealed`
 
 ### Fixed
 

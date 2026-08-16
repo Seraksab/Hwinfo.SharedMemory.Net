@@ -8,7 +8,7 @@ namespace Hwinfo.SharedMemory;
 /// <summary>
 /// Reads the sensor values shared by HWiNFO from shared memory.
 /// </summary>
-public class SharedMemoryReader : IDisposable
+public sealed class SharedMemoryReader : IDisposable
 {
   private const string HWiNfoSensorsSm2Mutex = "Global\\HWiNFO_SM2_MUTEX";
   private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
@@ -104,8 +104,6 @@ public class SharedMemoryReader : IDisposable
 
       _cache.Clear();
     }
-
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>
