@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A reading type HWiNFO reports that isn't one of the known nine is mapped to `SensorType.Other`
 - The constructor takes a single `SharedMemoryReaderOptions` instead of three optional parameters.
 - `SharedMemoryReader` is `sealed`
+- The package now ships the README as its NuGet description page and a `.snupkg` symbol package with
+  SourceLink, so a debugger can step into the library's sources
+- The package no longer declares a `win-x64` runtime identifier. It carries no RID-specific asset.
 
 ### Fixed
 

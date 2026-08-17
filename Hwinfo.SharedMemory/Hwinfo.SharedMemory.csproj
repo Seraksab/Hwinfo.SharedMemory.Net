@@ -8,17 +8,28 @@
         <IsPackable>true</IsPackable>
         <TargetFramework>net10.0-windows</TargetFramework>
         <LangVersion>14</LangVersion>
-        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <RootNamespace>Hwinfo.SharedMemory</RootNamespace>
         <VersionPrefix>3.0.0</VersionPrefix>
         <Nullable>enable</Nullable>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageId>Hwinfo.SharedMemory.Net</PackageId>
+        <PackageProjectUrl>https://github.com/Seraksab/Hwinfo.SharedMemory.Net</PackageProjectUrl>
         <RepositoryUrl>https://github.com/Seraksab/Hwinfo.SharedMemory.Net</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
         <PackageTags>Hwinfo,HWiNFO64</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
 
     <ItemGroup>
         <InternalsVisibleTo Include="Tests" />
