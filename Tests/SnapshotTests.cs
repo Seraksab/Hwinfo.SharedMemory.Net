@@ -467,6 +467,72 @@ public class SnapshotTests : IDisposable
   }
 
   [Fact]
+  public void Read_WithRequireMutex_WhenTheMutexIsUnavailable_ShouldThrowInvalidOperation()
+  {
+    // HWiNFO's global mutex doesn't exist here, which is exactly the condition the option is about:
+    // there is a perfectly readable section, and reading it would be unsynchronized
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+
+    var exception =
+      Assert.Throws<InvalidOperationException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
+
+    Assert.Contains("RequireMutex", exception.Message);
+  }
+
+  [Fact]
+  public void Read_WithoutRequireMutex_WhenTheMutexIsUnavailable_ShouldReadAnyway()
+  {
+    // The default: the mutex is advisory, so the same read goes ahead without it
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var result = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    Assert.Equal(SnapshotReadingCount, result.Readings.Length);
+  }
+
+  [Fact]
+  public void TryRead_WithRequireMutex_WhenThereIsNothingToRead_ShouldStillReturnFalse()
+  {
+    // "HWiNFO isn't publishing" has to keep reporting itself as false even in this mode, or a polling
+    // loop that turned the option on would get an exception every time HWiNFO isn't running
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+
+    var tried = reader.TryReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}", out var result);
+
+    Assert.False(tried);
+    Expect.NoReadings(result);
+  }
+
+  [Fact]
+  public void TryRead_WithRequireMutex_WithInvalidSignature_ShouldStillReturnFalse()
+  {
+    // Same for a section HWiNFO is tearing down or hasn't filled yet: there is nothing to synchronize
+    // access to, so the missing mutex is not what the caller should hear about
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SignatureOffset, 0xDEADBEEF)
+    );
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+
+    var tried = reader.TryReadMemoryMappedFile(snapshot.FileName, out var result);
+
+    Assert.False(tried);
+    Expect.NoReadings(result);
+  }
+
+  [Fact]
+  public void Read_WithRequireMutex_WhenTheSectionIsMissing_ShouldStillThrowFileNotFound()
+  {
+    // The throwing entry point reports the same condition its own way, and "HWiNFO isn't running" is
+    // the more useful answer of the two
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+
+    Assert.Throws<FileNotFoundException>(
+      () => reader.ReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}")
+    );
+  }
+
+  [Fact]
   public void TryRead_AfterDispose_ShouldThrowObjectDisposed()
   {
     using var snapshot = SharedMemorySnapshot.Publish();

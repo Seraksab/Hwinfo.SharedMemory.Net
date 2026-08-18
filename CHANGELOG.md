@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SharedMemoryReaderOptions.ReuseUnchangedPolls`: an opt-in setting that hands out the previous result
   while HWiNFO's poll time is unchanged, which makes reads more frequent than HWiNFO's polling period
   practically free
+- `SharedMemoryReaderOptions.RequireMutex`: an opt-in setting that fails a read with an
+  `InvalidOperationException` instead of going ahead when HWiNFO's mutex can't be obtained
 - `TryReadLocal` and `TryReadRemote`, which return `false` instead of throwing
 
 ### Changed

@@ -31,6 +31,20 @@ public class LiveHwinfoTests : IDisposable
   }
 
   [Fact]
+  public void ReadLocal_WithRequireMutex_ShouldReturnSensorValues()
+  {
+    // The one test that reads with HWiNFO's mutex actually held, so it doubles as the answer to
+    // whether this process can obtain it at all. A failure here means the mutex isn't available to it
+    // - typically because HWiNFO runs elevated and this doesn't - not that the read is broken.
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+
+    var sensorValues = reader.ReadLocal();
+
+    Assert.True(sensorValues.Readings.Length > 0);
+    Assert.True(sensorValues.Sensors.Length > 0);
+  }
+
+  [Fact]
   public void ReadRemote_0_ShouldReturnSensorValues()
   {
     var sensorValues = _reader.ReadRemote(0);

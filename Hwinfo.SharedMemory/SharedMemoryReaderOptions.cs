@@ -13,6 +13,12 @@ public sealed record SharedMemoryReaderOptions
   /// <summary>
   /// How long to wait for HWiNFO's mutex before a read gives up with a <see cref="TimeoutException"/>.
   /// <see cref="Timeout.InfiniteTimeSpan"/> waits indefinitely. Defaults to one second.
+  /// <para>
+  /// HWiNFO's mutex is advisory: it commonly runs elevated and the mutex it creates may not be
+  /// openable by a normal user process, in which case reads go ahead without it. This setting has no
+  /// effect then and no <see cref="TimeoutException"/> is thrown - see
+  /// <see cref="SharedMemoryReader"/> for what still guards those reads.
+  /// </para>
   /// </summary>
   public TimeSpan MutexTimeout { get; init; } = TimeSpan.FromSeconds(1);
 
@@ -22,6 +28,19 @@ public sealed record SharedMemoryReaderOptions
   /// polling period configured in HWiNFO. Defaults to one minute.
   /// </summary>
   public TimeSpan StalenessTimeout { get; init; } = TimeSpan.FromMinutes(1);
+
+  /// <summary>
+  /// Whether a read that cannot obtain HWiNFO's mutex fails with an
+  /// <see cref="InvalidOperationException"/> instead of going ahead without it. Off by default, i.e.
+  /// the mutex is advisory.
+  /// <para>
+  /// Turn this on to be certain no result was assembled unsynchronized. It only applies once there is
+  /// something to read: a missing section or one without a valid HWiNFO header still reports itself
+  /// the usual way, so a polling loop on <see cref="SharedMemoryReader.TryReadLocal"/> keeps getting
+  /// <c>false</c> while HWiNFO isn't publishing rather than an exception.
+  /// </para>
+  /// </summary>
+  public bool RequireMutex { get; init; }
 
   /// <summary>
   /// Whether to hand out the previous result instead of reading the shared memory again while HWiNFO's

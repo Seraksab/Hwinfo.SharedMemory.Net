@@ -7,6 +7,20 @@ namespace Hwinfo.SharedMemory;
 
 /// <summary>
 /// Reads the sensor values shared by HWiNFO from shared memory.
+/// <para>
+/// A read is kept out of the window in which HWiNFO republishes its readings by two mechanisms.
+/// HWiNFO's named mutex is held for the duration of a read, but only where it can be opened: HWiNFO
+/// commonly runs elevated and may create it with permissions a normal user process doesn't have,
+/// while the shared memory itself still opens read-only, so a read that can't take it proceeds
+/// without it and <see cref="SharedMemoryReaderOptions.MutexTimeout"/> then does nothing. Set
+/// <see cref="SharedMemoryReaderOptions.RequireMutex"/> to fail such a read instead.
+/// </para>
+/// <para>
+/// The second mechanism always runs: the section is copied, the header is read again, and the copy is
+/// discarded and retried unless the header still describes it. Its one blind spot is HWiNFO's poll
+/// time, which has a resolution of one second - so with a polling period below that and without the
+/// mutex, a result can mix the readings of two consecutive polls.
+/// </para>
 /// </summary>
 public sealed class SharedMemoryReader : IDisposable
 {
@@ -21,6 +35,7 @@ public sealed class SharedMemoryReader : IDisposable
 
   private readonly TimeSpan _mutexTimeout;
   private readonly TimeSpan _stalenessTimeout;
+  private readonly bool _requireMutex;
   private readonly bool _reuseUnchangedPolls;
   private readonly Lock _lock = new();
   private readonly Dictionary<string, MappedSection> _cache = new();
@@ -47,6 +62,7 @@ public sealed class SharedMemoryReader : IDisposable
 
     _mutexTimeout = options.MutexTimeout;
     _stalenessTimeout = options.StalenessTimeout;
+    _requireMutex = options.RequireMutex;
     _reuseUnchangedPolls = options.ReuseUnchangedPolls;
   }
 
@@ -58,6 +74,9 @@ public sealed class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="InvalidOperationException">
+  /// The mutex could not be obtained and <see cref="SharedMemoryReaderOptions.RequireMutex"/> is set.
+  /// </exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public SensorReadings ReadLocal()
   {
@@ -80,6 +99,9 @@ public sealed class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="InvalidOperationException">
+  /// The mutex could not be obtained and <see cref="SharedMemoryReaderOptions.RequireMutex"/> is set.
+  /// </exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public bool TryReadLocal(out SensorReadings readings)
   {
@@ -96,6 +118,9 @@ public sealed class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="InvalidOperationException">
+  /// The mutex could not be obtained and <see cref="SharedMemoryReaderOptions.RequireMutex"/> is set.
+  /// </exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public SensorReadings ReadRemote(int index = 0)
   {
@@ -121,6 +146,9 @@ public sealed class SharedMemoryReader : IDisposable
   /// <exception cref="UnauthorizedAccessException">Access is invalid for the shared memory file.</exception>
   /// <exception cref="InvalidDataException">Failure to parse data read from the shared memory file.</exception>
   /// <exception cref="TimeoutException">The mutex could not be acquired within the configured timeout.</exception>
+  /// <exception cref="InvalidOperationException">
+  /// The mutex could not be obtained and <see cref="SharedMemoryReaderOptions.RequireMutex"/> is set.
+  /// </exception>
   /// <exception cref="ObjectDisposedException">The reader has been disposed.</exception>
   public bool TryReadRemote(int index, out SensorReadings readings)
   {
@@ -227,6 +255,11 @@ public sealed class SharedMemoryReader : IDisposable
           }
         }
 
+        // There is a section worth reading, so this is where refusing to read it unsynchronized
+        // belongs. Anything above reports itself first: "HWiNFO isn't publishing" is the section's
+        // answer to give, and a polling loop on TryRead expects it as false rather than as a throw.
+        if (_requireMutex && !mutexAcquired) throw MutexUnavailable();
+
         for (var attempt = 0;; attempt++)
         {
           if (section.TryRead(header, out readings)) return true;
@@ -302,6 +335,20 @@ public sealed class SharedMemoryReader : IDisposable
   }
 
   /// <summary>
+  /// Builds the failure for a read that may not go ahead without HWiNFO's mutex.
+  /// </summary>
+  private InvalidOperationException MutexUnavailable()
+  {
+    var reason = _mutexAccessDenied ? "this process may not open it" : "it does not exist";
+    return new InvalidOperationException(
+      $"The mutex '{HWiNfoSensorsSm2Mutex}' cannot be used to synchronize with HWiNFO because " +
+      $"{reason}, and {nameof(SharedMemoryReaderOptions)}.{nameof(SharedMemoryReaderOptions.RequireMutex)} " +
+      "is set. HWiNFO may be running with higher privileges than this process; run with the same ones, " +
+      "or turn the option off to read without the mutex."
+    );
+  }
+
+  /// <summary>
   /// Returns whether a stale looking section is worth releasing and opening again.
   /// <para>
   /// A section that is <em>still</em> stale after it was already reopened is one nothing is going to
@@ -357,7 +404,10 @@ public sealed class SharedMemoryReader : IDisposable
   /// </summary>
   private Mutex? AcquireMutex()
   {
-    if (_mutex != null || _mutexAccessDenied) return _mutex;
+    // The denial is latched so a reader that can't have the mutex doesn't ask for it on every read.
+    // When it is required that trade is wrong: the reader would keep failing over a condition an
+    // HWiNFO restart may well have cleared, so in that mode it is asked for again every time.
+    if (_mutex != null || (_mutexAccessDenied && !_requireMutex)) return _mutex;
 
     try
     {
