@@ -40,6 +40,12 @@ public sealed class SharedMemoryReader : IDisposable
   private readonly Lock _lock = new();
   private readonly Dictionary<string, MappedSection> _cache = new();
 
+  /// <summary>
+  /// The name of HWiNFO's mutex. Internal so tests can point the reader at a mutex they control,
+  /// rather than depending on whether HWiNFO happens to be running on the machine.
+  /// </summary>
+  internal string MutexName { get; init; } = HWiNfoSensorsSm2Mutex;
+
   // The mutex is advisory:
   // HWiNFO runs elevated and its mutex may be inaccessible to a normal user process, while the shared memory itself
   // still opens read-only. It is therefore opened lazily and best-effort, and reads proceed without it if it can't be
@@ -217,7 +223,7 @@ public sealed class SharedMemoryReader : IDisposable
       if (mutex != null && !mutexAcquired)
       {
         throw new TimeoutException(
-          $"Timed out after {_mutexTimeout} waiting for the mutex '{HWiNfoSensorsSm2Mutex}'."
+          $"Timed out after {_mutexTimeout} waiting for the mutex '{MutexName}'."
         );
       }
 
@@ -341,7 +347,7 @@ public sealed class SharedMemoryReader : IDisposable
   {
     var reason = _mutexAccessDenied ? "this process may not open it" : "it does not exist";
     return new InvalidOperationException(
-      $"The mutex '{HWiNfoSensorsSm2Mutex}' cannot be used to synchronize with HWiNFO because " +
+      $"The mutex '{MutexName}' cannot be used to synchronize with HWiNFO because " +
       $"{reason}, and {nameof(SharedMemoryReaderOptions)}.{nameof(SharedMemoryReaderOptions.RequireMutex)} " +
       "is set. HWiNFO may be running with higher privileges than this process; run with the same ones, " +
       "or turn the option off to read without the mutex."
@@ -411,7 +417,7 @@ public sealed class SharedMemoryReader : IDisposable
 
     try
     {
-      Mutex.TryOpenExisting(HWiNfoSensorsSm2Mutex, out _mutex);
+      Mutex.TryOpenExisting(MutexName, out _mutex);
     }
     catch (UnauthorizedAccessException)
     {

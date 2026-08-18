@@ -17,6 +17,14 @@ public class SnapshotTests : IDisposable
   // disposed, so it outlives the test that published it
   public void Dispose() => _reader.Dispose();
 
+  /// <summary>
+  /// A reader pointed at a mutex name nothing has created, i.e. one it can never obtain. These tests
+  /// have to hold whether or not HWiNFO - and with it its own mutex - is present on the machine.
+  /// A name without a namespace prefix is a session local one.
+  /// </summary>
+  private static SharedMemoryReader NoMutexReader(SharedMemoryReaderOptions options) =>
+    new(options) { MutexName = $"Hwinfo.SharedMemory.Tests.NoMutex_{Guid.NewGuid():N}" };
+
   [Fact]
   public void Read_ShouldReturnAllReadings()
   {
@@ -469,15 +477,31 @@ public class SnapshotTests : IDisposable
   [Fact]
   public void Read_WithRequireMutex_WhenTheMutexIsUnavailable_ShouldThrowInvalidOperation()
   {
-    // HWiNFO's global mutex doesn't exist here, which is exactly the condition the option is about:
-    // there is a perfectly readable section, and reading it would be unsynchronized
+    // The condition the option is about: a perfectly readable section, which reading would be
+    // unsynchronized
     using var snapshot = SharedMemorySnapshot.Publish();
-    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+    using var reader = NoMutexReader(new SharedMemoryReaderOptions { RequireMutex = true });
 
     var exception =
       Assert.Throws<InvalidOperationException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
 
     Assert.Contains("RequireMutex", exception.Message);
+    Assert.Contains("does not exist", exception.Message);
+  }
+
+  [Fact]
+  public void Read_WithRequireMutex_WhenTheMutexIsAvailable_ShouldRead()
+  {
+    // The other side of it: against a mutex that can be taken the read goes through - twice over, so
+    // it is also shown to release what it acquired
+    using var snapshot = SharedMemorySnapshot.Publish();
+    var mutexName = $"Hwinfo.SharedMemory.Tests.Mutex_{Guid.NewGuid():N}";
+    using var mutex = new Mutex(initiallyOwned: false, mutexName);
+    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true })
+      { MutexName = mutexName };
+
+    Assert.Equal(SnapshotReadingCount, reader.ReadMemoryMappedFile(snapshot.FileName).Readings.Length);
+    Assert.Equal(SnapshotReadingCount, reader.ReadMemoryMappedFile(snapshot.FileName).Readings.Length);
   }
 
   [Fact]
@@ -485,8 +509,9 @@ public class SnapshotTests : IDisposable
   {
     // The default: the mutex is advisory, so the same read goes ahead without it
     using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = NoMutexReader(new SharedMemoryReaderOptions());
 
-    var result = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    var result = reader.ReadMemoryMappedFile(snapshot.FileName);
 
     Assert.Equal(SnapshotReadingCount, result.Readings.Length);
   }
@@ -496,7 +521,7 @@ public class SnapshotTests : IDisposable
   {
     // "HWiNFO isn't publishing" has to keep reporting itself as false even in this mode, or a polling
     // loop that turned the option on would get an exception every time HWiNFO isn't running
-    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+    using var reader = NoMutexReader(new SharedMemoryReaderOptions { RequireMutex = true });
 
     var tried = reader.TryReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}", out var result);
 
@@ -512,7 +537,7 @@ public class SnapshotTests : IDisposable
     using var snapshot = SharedMemorySnapshot.Publish(data =>
       SharedMemorySnapshot.Write(data, SharedMemorySnapshot.SignatureOffset, 0xDEADBEEF)
     );
-    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+    using var reader = NoMutexReader(new SharedMemoryReaderOptions { RequireMutex = true });
 
     var tried = reader.TryReadMemoryMappedFile(snapshot.FileName, out var result);
 
@@ -525,7 +550,7 @@ public class SnapshotTests : IDisposable
   {
     // The throwing entry point reports the same condition its own way, and "HWiNFO isn't running" is
     // the more useful answer of the two
-    using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+    using var reader = NoMutexReader(new SharedMemoryReaderOptions { RequireMutex = true });
 
     Assert.Throws<FileNotFoundException>(
       () => reader.ReadMemoryMappedFile($"Local\\Hwinfo.SharedMemory.Tests_{Guid.NewGuid():N}")
