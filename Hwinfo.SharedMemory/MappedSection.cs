@@ -56,6 +56,11 @@ internal sealed class MappedSection : IDisposable
   // HWiNFO overwrites it (e.g. with 0xDEADBEEF) while the section is being torn down
   private const uint HWiNfoSensorsSignature = 0x53695748;
 
+  // Layout version of the shared memory.
+  // Newer versions only append fields (the offsets and element sizes are read from the header).
+  // Anything below this is rejected, anything above is accepted.
+  private const uint HWiNfoSensorsMinVersion = 2;
+
   // The range DateTimeOffset.FromUnixTimeSeconds accepts, i.e. the years 0001 to 9999
   private const long MinUnixSeconds = -62135596800;
   private const long MaxUnixSeconds = 253402300799;
@@ -106,7 +111,8 @@ internal sealed class MappedSection : IDisposable
   /// <exception cref="InvalidDataException">The header describes a section that cannot be parsed.</exception>
   internal bool TryRead(in SmSensorsSharedMem2 header, out SensorReadings readings)
   {
-    var pollTime = ToPollTime(header.PollTime);
+    // Only the two checks that size the copy safely run here. Everything else the header says is
+    // validated further down, once it is known to describe what was copied - see the Describes check.
     var sensorCount = ValidateSection(
       header.SensorSection_Offset,
       header.SensorSection_SizeOfElement,
@@ -131,7 +137,8 @@ internal sealed class MappedSection : IDisposable
         && _sensorCount == sensorCount
         && _readingCount == readingCount)
     {
-      readings = new SensorReadings(pollTime, _lastReadings, _sensorsView);
+      // The poll time is the one a previous read already validated and parsed, so it can't throw here
+      readings = new SensorReadings(ToPollTime(header.PollTime), _lastReadings, _sensorsView);
       return true;
     }
 
@@ -154,6 +161,13 @@ internal sealed class MappedSection : IDisposable
       return false;
     }
 
+    // The header is now known to be the one the copy belongs to, so what it says about the rest of
+    // the section can be trusted enough to reject it. Validating any of this earlier would turn a
+    // header caught mid-write - a garbage version or poll time - into an exception, when it is the
+    // very case the caller's retry exists for.
+    ValidateVersion(header);
+    var pollTime = ToPollTime(header.PollTime);
+
     // Parse fills _sensorsView along with the readings, so it is never default once it returns
     readings = new SensorReadings(pollTime, Parse(sensorCount, readingCount), _sensorsView);
     _lastPollTime = header.PollTime;
@@ -165,6 +179,21 @@ internal sealed class MappedSection : IDisposable
   {
     _accessor.Dispose();
     _mmf.Dispose();
+  }
+
+  /// <summary>
+  /// Checks the shared memory version of the header against the minimum this library can parse.
+  /// </summary>
+  /// <exception cref="InvalidDataException">The version is lower than the supported minimum.</exception>
+  private void ValidateVersion(in SmSensorsSharedMem2 header)
+  {
+    if (header.Version < HWiNfoSensorsMinVersion)
+    {
+      throw new InvalidDataException(
+        $"'{_fileName}' has the unsupported shared memory version {header.Version}, " +
+        $"expected {HWiNfoSensorsMinVersion} or higher."
+      );
+    }
   }
 
   /// <summary>

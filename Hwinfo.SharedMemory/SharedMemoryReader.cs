@@ -14,11 +14,6 @@ public sealed class SharedMemoryReader : IDisposable
   private const string HWiNfoSensorsMapFileNameLocal = "Global\\HWiNFO_SENS_SM2";
   private const string HWiNfoSensorsMapFileNameRemote = "Global\\HWiNFO_SENS_SM2_REMOTE_";
 
-  // Layout version of the shared memory.
-  // Newer versions only append fields (the offsets and element sizes are read from the header).
-  // Anything below this is rejected, anything above is accepted.
-  private const uint HWiNfoSensorsMinVersion = 2;
-
   // How often a read is retried when HWiNFO republishes the section underneath it, and how long the
   // first retry backs off before it does (doubling with every further attempt)
   private const int MaxReadAttempts = 5;
@@ -227,7 +222,6 @@ public sealed class SharedMemoryReader : IDisposable
 
         for (var attempt = 0;; attempt++)
         {
-          ValidateVersion(header, fileName);
           if (section.TryRead(header, out readings)) return true;
 
           if (attempt + 1 >= MaxReadAttempts)
@@ -297,23 +291,6 @@ public sealed class SharedMemoryReader : IDisposable
     if (_cache.Remove(fileName, out var cached))
     {
       cached.Dispose();
-    }
-  }
-
-  /// <summary>
-  /// Validates the version of the shared memory header to ensure compatibility with the expected minimum version.
-  /// </summary>
-  /// <exception cref="InvalidDataException">
-  /// Thrown when the shared memory version in the header is lower than the supported minimum version.
-  /// </exception>
-  private static void ValidateVersion(in SmSensorsSharedMem2 header, string fileName)
-  {
-    if (header.Version < HWiNfoSensorsMinVersion)
-    {
-      throw new InvalidDataException(
-        $"'{fileName}' has the unsupported shared memory version {header.Version}, " +
-        $"expected {HWiNfoSensorsMinVersion} or higher."
-      );
     }
   }
 

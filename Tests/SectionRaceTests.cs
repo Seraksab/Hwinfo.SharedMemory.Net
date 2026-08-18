@@ -53,6 +53,55 @@ public class SectionRaceTests
   }
 
   [Fact]
+  public void Read_WithAnUnsupportedVersionWhileTheSectionMoves_ShouldRetryRatherThanRejectIt()
+  {
+    // Everything the header says is only trustworthy once it is known to describe what was copied.
+    // A header caught mid-write can carry any version at all, so on a section that keeps moving the
+    // version is no reason to give up - the retry is. It used to be checked before the first copy,
+    // which turned a torn read into a permanent-looking "unsupported version".
+    using var snapshot = SharedMemorySnapshot.Publish(data =>
+      SharedMemorySnapshot.Write(data, SharedMemorySnapshot.VersionOffset, 1u)
+    );
+    using var reader = new SharedMemoryReader();
+
+    using (SectionMutator.MovingPollTime(snapshot))
+    {
+      var raced = Assert.Throws<InvalidDataException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
+
+      Assert.Contains("read attempts", raced.Message);
+      Assert.DoesNotContain("unsupported", raced.Message);
+    }
+
+    // Deferred, not dropped: once the section holds still the version is what the read fails on
+    snapshot.PatchPollTimeToNow();
+    var settled = Assert.Throws<InvalidDataException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
+
+    Assert.Contains("unsupported shared memory version", settled.Message);
+  }
+
+  [Fact]
+  public void Read_WithAnUnrepresentablePollTimeWhileTheSectionMoves_ShouldRetryRatherThanRejectIt()
+  {
+    // Same for the poll time, which is the other field that is read straight out of a header that
+    // may be mid-write and that nothing else in the copy depends on
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader();
+
+    using (SectionMutator.MovingUnrepresentablePollTime(snapshot))
+    {
+      var raced = Assert.Throws<InvalidDataException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
+
+      Assert.Contains("read attempts", raced.Message);
+      Assert.DoesNotContain("poll time", raced.Message);
+    }
+
+    // The poll time it settled on is still not a date, so that is what the read fails on now
+    var settled = Assert.Throws<InvalidDataException>(() => reader.ReadMemoryMappedFile(snapshot.FileName));
+
+    Assert.Contains("poll time", settled.Message);
+  }
+
+  [Fact]
   public void Read_WhileTheReadingCountIsRepublished_ShouldOnlyReturnSetsTheSectionDeclared()
   {
     using var snapshot = SharedMemorySnapshot.Publish();
@@ -126,6 +175,13 @@ public class SectionRaceTests
       var start = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
       return new SectionMutator(iteration => snapshot.PatchPollTime(start + iteration));
     }
+
+    /// <summary>
+    /// Moves the poll time through values that are all too large to be a date, without ever
+    /// repeating one - so the header can neither be validated nor agree with itself.
+    /// </summary>
+    internal static SectionMutator MovingUnrepresentablePollTime(SharedMemorySnapshot snapshot) =>
+      new(iteration => snapshot.PatchPollTime(long.MaxValue - iteration));
 
     /// <summary>
     /// Alternates the reading count between none and all of them, the way HWiNFO does while it
