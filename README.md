@@ -10,8 +10,8 @@ A small and simple library to read sensor values shared by [HWiNFO](https://www.
 - Windows, .NET 10 or later
 - [HWiNFO](https://www.hwinfo.com/) running with **Shared Memory Support** enabled
 
-Without that setting HWiNFO publishes no shared memory section at all, so every read throws
-`FileNotFoundException` - see [Errors](#errors).
+Without that setting HWiNFO publishes no section at all and every read throws `FileNotFoundException`,
+see [Errors](#errors).
 
 ## Installation
 
@@ -48,18 +48,15 @@ if (reader.TryReadLocal(out var result))
 }
 ```
 
-They return `false` if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
-i.e. HWiNFO isn't running, Shared Memory Support is off, there is no remote connection at that index,
-or the instance is currently starting up or shutting down. Everything else - a section that can't be
-parsed, a mutex that can't be acquired, a disposed reader - still throws, see [Errors](#errors).
+They return `false` for "nothing to read": no section, or one without a valid HWiNFO header - HWiNFO
+isn't running, Shared Memory Support is off, there is no remote connection at that index, or the
+instance is starting up or shutting down. Everything else still throws, see [Errors](#errors).
 
 ### What a read returns
 
-`ReadLocal` and `ReadRemote` return a `SensorReadings`, which carries the `Readings` together with the
-`PollTime` at which HWiNFO produced them, so a caller polling faster than HWiNFO can tell new values
-from a repeat of the previous ones.\
-It also carries `Sensors`, every sensor HWiNFO published - including those that have no readings of
-their own and therefore do not appear in any `SensorReading`:
+`ReadLocal` and `ReadRemote` return a `SensorReadings`: the `Readings`, the `PollTime` HWiNFO produced
+them at - so a caller polling faster than HWiNFO can tell new values from a repeat - and `Sensors`,
+every sensor it published, including those with no readings of their own:
 
 ```csharp
 foreach (var sensor in result.Sensors)
@@ -68,8 +65,8 @@ foreach (var sensor in result.Sensors)
 }
 ```
 
-The same `Sensor` instance is shared by all readings of that sensor and is kept across reads for as
-long as HWiNFO reports it unchanged, so reference equality is a valid way to group or key by sensor.
+The same `Sensor` instance is shared by all readings of that sensor and kept across reads for as long
+as HWiNFO reports it unchanged, so reference equality is a valid way to group or key by sensor.
 
 ## Configuration
 
@@ -77,40 +74,69 @@ All of the reader's settings live on `SharedMemoryReaderOptions`, each of them o
 
 | Option                | Default  | Meaning                                                                            |
 |-----------------------|----------|------------------------------------------------------------------------------------|
-| `MutexTimeout`        | 1 second | How long a read waits for HWiNFO's mutex before it throws a `TimeoutException`     |
+| `MutexTimeout`        | 1 second | How long a read waits for HWiNFO's mutex; no effect when it can't be opened        |
 | `StalenessTimeout`    | 1 minute | How long a section may go without an update before it is reopened; `Zero` to never |
+| `RequireMutex`        | `false`  | Whether a read that can't obtain the mutex fails instead of going ahead            |
 | `ReuseUnchangedPolls` | `false`  | Whether to hand out the previous result while HWiNFO's `PollTime` is unchanged     |
 
 ### Reusing unchanged polls
 
-If you poll more often than HWiNFO updates its shared memory, you can let the reader hand out the previous result
-instead of reading again:
+If you poll more often than HWiNFO updates, the reader can hand out the previous result instead of
+reading again:
 
 ```csharp
 using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { ReuseUnchangedPolls = true });
 ```
 
-Note that HWiNFO reports its poll time in whole seconds, so with a polling period configured below one
-second this can serve values that are up to a second old - which an unchanged `PollTime` makes visible.
+HWiNFO reports its poll time in whole seconds, so with a polling period below one second this can
+serve values up to a second old - which an unchanged `PollTime` makes visible.
+
+## Synchronization with HWiNFO
+
+HWiNFO republishes its readings on every poll: it drops the reading count to zero and counts it back
+up while it refills the section, a window of tens of microseconds every couple of seconds. Two things
+keep a read out of it.
+
+**HWiNFO's mutex** (`Global\HWiNFO_SM2_MUTEX`) is held for the duration of a read - but only where it
+can be opened. HWiNFO commonly runs elevated and may create it with permissions a normal user process
+doesn't have, while the shared memory itself still opens read-only, so a read that can't take it goes
+ahead without it and `MutexTimeout` does nothing. Running with the same privileges as HWiNFO is what
+makes it available; there is no API for telling which mode a read ran in. To refuse such a read
+instead, set `RequireMutex`:
+
+```csharp
+using var reader = new SharedMemoryReader(new SharedMemoryReaderOptions { RequireMutex = true });
+```
+
+It then throws `InvalidOperationException` - but only once there is something to read, so a missing or
+torn down section still reports itself as usual and a `TryRead*` polling loop is unaffected.
+
+**A check after the fact** always runs: the reader copies the section, re-reads the header, and
+discards the copy unless it still describes what was copied, retrying a few times with a backoff. That
+catches a republish that started or finished during the copy, and is what makes a read without the
+mutex safe in practice. Its blind spot is the poll time's one-second resolution: with HWiNFO polling
+faster than that, a republish which *completes* between the two header reads leaves every compared
+field back at its original value, so a result can mix readings from two consecutive polls. Each is
+still a real reading; they just may not all come from the same poll.
 
 ## Lifetime and threading
 
-- **Keep the reader and reuse it.** It caches the memory mapping and everything it decodes from it, so
-  a steady-state read allocates little more than the result itself. Creating one per read throws that
-  away and reopens the section every time.
+- **Keep the reader and reuse it.** It caches the mapping and everything decoded from it, so a
+  steady-state read allocates little more than the result. One reader per read throws that away.
 - **A reader is safe to use from multiple threads.** Reads are serialized internally.
-- **Dispose it when you're done.** `SharedMemoryReader` is `IDisposable` and holds the open mapping
-  until it is disposed.
+- **Dispose it when you're done.** It holds the open mapping until you do.
 
 ## Errors
 
 - **`FileNotFoundException`** - HWiNFO isn't running, Shared Memory Support is off, or there is no
-  remote connection at that index. This is the expected signal for "no data available", not a bug -
+  remote connection at that index. The expected signal for "no data available", not a bug -
   `TryReadLocal`/`TryReadRemote` report it as `false` instead.
-- **`TimeoutException`** - HWiNFO's mutex was not acquired within `MutexTimeout`.
+- **`TimeoutException`** - the mutex was not acquired within `MutexTimeout`. Only thrown when the
+  mutex exists and this process may open it.
 - **`InvalidDataException`** - the section could not be parsed: bad signature, unsupported version, or
   a section that doesn't fit the mapping.
 - **`UnauthorizedAccessException`** - the section exists but this process may not open it.
+- **`InvalidOperationException`** - `RequireMutex` is set and the mutex could not be obtained.
 - **`ObjectDisposedException`** - the reader has been disposed.
 
 `ReadRemote` and `TryReadRemote` additionally throw `ArgumentOutOfRangeException` for a negative index,
@@ -118,21 +144,15 @@ and the constructor throws it for a negative or oversized timeout.
 
 ## Benchmark
 
-Reading 470 readings of 25 sensors.\
-`ReadSharedMemoryReusingPolls` is the same read with `ReuseUnchangedPolls` enabled, i.e. the poll time 
-hasn't moved and the previous result is handed out:
+Reading 470 readings of 25 sensors. `ReadSharedMemoryReusingPolls` is the same read with
+`ReuseUnchangedPolls` enabled, i.e. the poll time hasn't moved and the previous result is handed out:
 
 | Method                       |         Mean | Ratio | Allocated |
 |------------------------------|-------------:|------:|----------:|
 | ReadSharedMemory             | 36,801.16 ns | 1.000 |   33864 B |
 | ReadSharedMemoryReusingPolls |     55.70 ns | 0.002 |         - |
 
-Run on:
-
-- Windows 11 Pro
-- .NET 10.0.111
-- CPU: AMD Ryzen 9 7900X
-- RAM: DDR5-6200 CL30
+Run on Windows 11 Pro, .NET 10.0.111, AMD Ryzen 9 7900X, DDR5-6200 CL30.
 
 ## License
 
