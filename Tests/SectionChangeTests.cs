@@ -144,7 +144,7 @@ public class SectionChangeTests : IDisposable
     // condition as a section that isn't there at all
     snapshot.PatchSignature(0xDEADBEEF);
     Assert.False(_reader.TryReadMemoryMappedFile(snapshot.FileName, out var torn));
-    Assert.Equal(default, torn);
+    Expect.NoReadings(torn);
 
     // The failed read released the cached section instead of poisoning it, so the reader picks the
     // section up again as soon as it carries a valid header

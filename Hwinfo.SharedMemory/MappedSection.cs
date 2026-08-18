@@ -150,7 +150,7 @@ internal sealed class MappedSection : IDisposable
     // window and copy a truncated or mixed set, so the header has to still describe what was copied.
     if (!TryReadHeader(out var afterRead) || !header.Describes(afterRead))
     {
-      readings = default;
+      readings = SensorReadings.None;
       return false;
     }
 

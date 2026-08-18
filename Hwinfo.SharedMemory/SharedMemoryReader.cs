@@ -74,7 +74,8 @@ public sealed class SharedMemoryReader : IDisposable
   /// publishing them.
   /// </summary>
   /// <param name="readings">
-  /// The sensor values and the time HWiNFO last polled them, or <c>default</c> if there are none
+  /// The sensor values and the time HWiNFO last polled them. Empty if there are none, so it is safe
+  /// to iterate even when this returns <c>false</c>.
   /// </param>
   /// <returns>
   /// <c>false</c> if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
@@ -113,7 +114,8 @@ public sealed class SharedMemoryReader : IDisposable
   /// </summary>
   /// <param name="index">The connection index starting with 0</param>
   /// <param name="readings">
-  /// The sensor values and the time HWiNFO last polled them, or <c>default</c> if there are none
+  /// The sensor values and the time HWiNFO last polled them. Empty if there are none, so it is safe
+  /// to iterate even when this returns <c>false</c>.
   /// </param>
   /// <returns>
   /// <c>false</c> if the shared memory section doesn't exist or doesn't carry a valid HWiNFO header,
@@ -198,7 +200,7 @@ public sealed class SharedMemoryReader : IDisposable
 
       try
       {
-        readings = default;
+        readings = SensorReadings.None;
 
         var section = GetOrOpenSection(fileName, throwIfUnavailable);
         if (section == null) return false;

@@ -19,7 +19,20 @@ public readonly record struct SensorReadings(
   DateTimeOffset PollTime,
   ImmutableArray<SensorReading> Readings,
   ImmutableArray<Sensor> Sensors
-);
+)
+{
+  /// <summary>
+  /// The result handed out when there is nothing to read.
+  /// <para>
+  /// Its collections are <em>empty</em> rather than <c>default</c>: a caller that overlooks the
+  /// <c>false</c> of a <c>TryRead</c> iterates nothing instead of hitting the
+  /// <see cref="NullReferenceException"/> an uninitialized <see cref="ImmutableArray{T}"/> throws.
+  /// </para>
+  /// </summary>
+  internal static readonly SensorReadings None = new(
+    default, ImmutableArray<SensorReading>.Empty, ImmutableArray<Sensor>.Empty
+  );
+}
 
 /// <summary>
 /// A single sensor reading.

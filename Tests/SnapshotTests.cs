@@ -391,7 +391,7 @@ public class SnapshotTests : IDisposable
     );
 
     Assert.False(tried);
-    Assert.Equal(default, result);
+    Expect.NoReadings(result);
   }
 
   [Fact]
@@ -406,7 +406,7 @@ public class SnapshotTests : IDisposable
     var tried = _reader.TryReadMemoryMappedFile(snapshot.FileName, out var result);
 
     Assert.False(tried);
-    Assert.Equal(default, result);
+    Expect.NoReadings(result);
   }
 
   [Fact]
@@ -438,7 +438,26 @@ public class SnapshotTests : IDisposable
     var tried = _reader.TryReadRemote(999, out var result);
 
     Assert.False(tried);
-    Assert.Equal(default, result);
+    Expect.NoReadings(result);
+  }
+
+  [Fact]
+  public void TryRead_WhenItReturnsFalse_ShouldHandOutAResultThatIsSafeToUse()
+  {
+    // "HWiNFO isn't running" is the condition TryRead exists to report without an exception, so the
+    // result it hands out must not produce one either: a default ImmutableArray throws a
+    // NullReferenceException on every use, which put the exception back for any caller that read the
+    // out value without branching on the false first
+    Assert.False(_reader.TryReadRemote(999, out var result));
+
+    // Read through locals: it is reaching for Length at all that used to throw, not the count
+    var readingCount = result.Readings.Length;
+    var sensorCount = result.Sensors.Length;
+    Assert.Equal(0, readingCount);
+    Assert.Equal(0, sensorCount);
+
+    foreach (var reading in result.Readings) Assert.Fail($"Unexpected reading '{reading.LabelUser}'");
+    foreach (var sensor in result.Sensors) Assert.Fail($"Unexpected sensor '{sensor.NameUser}'");
   }
 
   [Fact]
