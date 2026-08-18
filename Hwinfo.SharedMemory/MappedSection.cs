@@ -87,6 +87,14 @@ internal sealed class MappedSection : IDisposable
   }
 
   /// <summary>
+  /// When this section was opened to replace one that looked stale, as an
+  /// <see cref="Environment.TickCount64"/> stamp, or <c>null</c> if it wasn't. Lets the reader tell a
+  /// section it has already tried to replace from one it hasn't, so a section nothing is going to
+  /// refresh isn't reopened on every single read.
+  /// </summary>
+  internal long? StaleReopenedAt { get; set; }
+
+  /// <summary>
   /// Reads the header and returns whether it carries a valid HWiNFO signature.
   /// </summary>
   internal bool TryReadHeader(out SmSensorsSharedMem2 header)

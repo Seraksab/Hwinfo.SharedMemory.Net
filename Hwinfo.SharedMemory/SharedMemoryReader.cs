@@ -200,7 +200,8 @@ public sealed class SharedMemoryReader : IDisposable
         var section = GetOrOpenSection(fileName, throwIfUnavailable);
         if (section == null) return false;
 
-        if (!section.TryReadHeader(out var header) || IsStale(header))
+        var headerValid = section.TryReadHeader(out var header);
+        if (!headerValid || ShouldReplaceStale(section, header))
         {
           // The section we're mapped to has been torn down or is no longer being updated, e.g.
           // because HWiNFO was restarted. Release it - holding on to it would keep serving stale
@@ -209,6 +210,12 @@ public sealed class SharedMemoryReader : IDisposable
           RemoveFromCache(fileName);
           section = GetOrOpenSection(fileName, throwIfUnavailable);
           if (section == null) return false;
+
+          // Remember that this one already is the replacement for a stale section, so that a section
+          // nothing refreshes isn't reopened again on the very next read. Only staleness is held off
+          // like this: a torn down section is one HWiNFO is expected to publish again shortly.
+          if (headerValid) section.StaleReopenedAt = Environment.TickCount64;
+
           if (!section.TryReadHeader(out header))
           {
             if (throwIfUnavailable)
@@ -292,6 +299,26 @@ public sealed class SharedMemoryReader : IDisposable
     {
       cached.Dispose();
     }
+  }
+
+  /// <summary>
+  /// Returns whether a stale looking section is worth releasing and opening again.
+  /// <para>
+  /// A section that is <em>still</em> stale after it was already reopened is one nothing is going to
+  /// refresh - an orphan another process keeps alive, or an HWiNFO whose monitoring is paused.
+  /// Reopening it again would throw away the mapping and every string decoded from it on every
+  /// single read, for nothing, so it is retried only once per staleness timeout. A section that was
+  /// never reopened is always retried, which is what keeps an HWiNFO restart detected on the first
+  /// read after it goes stale.
+  /// </para>
+  /// </summary>
+  private bool ShouldReplaceStale(MappedSection section, in SmSensorsSharedMem2 header)
+  {
+    if (!IsStale(header)) return false;
+
+    var reopenedAt = section.StaleReopenedAt;
+    return reopenedAt == null
+           || Environment.TickCount64 - reopenedAt.Value >= _stalenessTimeout.TotalMilliseconds;
   }
 
   /// <summary>

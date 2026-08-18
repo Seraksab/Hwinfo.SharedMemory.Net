@@ -119,6 +119,52 @@ public class SectionChangeTests : IDisposable
   }
 
   [Fact]
+  public void Read_WhenTheSectionStaysStale_ShouldReopenItOnlyOncePerStalenessTimeout()
+  {
+    using var snapshot = SharedMemorySnapshot.Publish();
+
+    var first = _reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    // The first read after it goes stale releases and reopens it, which drops every string it decoded
+    snapshot.PatchPollTime(0);
+    var reopened = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.NotSame(first.Readings[0].LabelOrig, reopened.Readings[0].LabelOrig);
+
+    // It is still stale, because nothing is refreshing it - an orphan another process keeps alive, or
+    // an HWiNFO with monitoring paused. Reopening it again would pay for a mapping and a full decode
+    // on every read of a polling loop and change nothing, so it is left alone until the timeout is up.
+    var again = _reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.Same(reopened.Readings[0].LabelOrig, again.Readings[0].LabelOrig);
+
+    // Still the stale data it was reopened on, just without reopening it to get there
+    Assert.Equal(DateTimeOffset.UnixEpoch, again.PollTime);
+    Assert.Equal(FullReadingCount, again.Readings.Length);
+  }
+
+  [Fact]
+  public void Read_WhenTheStalenessTimeoutElapses_ShouldGiveTheStaleSectionAnotherChance()
+  {
+    // The hold-off is only a hold-off. HWiNFO may yet publish a new section under the same name, and
+    // opening it again is the only way to find that out, so the retry comes back round every timeout.
+    using var snapshot = SharedMemorySnapshot.Publish();
+    using var reader = new SharedMemoryReader(
+      new SharedMemoryReaderOptions { StalenessTimeout = TimeSpan.FromMilliseconds(50) }
+    );
+
+    snapshot.PatchPollTime(0);
+    var reopened = reader.ReadMemoryMappedFile(snapshot.FileName);
+
+    var heldOff = reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.Same(reopened.Readings[0].LabelOrig, heldOff.Readings[0].LabelOrig);
+
+    // Comfortably past both the timeout and the resolution of the clock the hold-off is measured on
+    Thread.Sleep(200);
+
+    var retried = reader.ReadMemoryMappedFile(snapshot.FileName);
+    Assert.NotSame(heldOff.Readings[0].LabelOrig, retried.Readings[0].LabelOrig);
+  }
+
+  [Fact]
   public void Read_WithStalenessCheckDisabled_ShouldKeepUsingTheCachedSection()
   {
     using var snapshot = SharedMemorySnapshot.Publish();
